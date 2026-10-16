@@ -1,0 +1,60 @@
+{
+  "name": "@juliuskb/opencode-voice",
+  "version": "0.0.1",
+  "description": "Local-first voice dictation for OpenCode with push-to-talk Whisper transcription",
+  "type": "module",
+  "scripts": {
+    "check": "tsc -p tsconfig.json",
+    "test": "bun test"
+  },
+  "exports": {
+    ".": "./src/index.ts",
+    "./tui": "./src/tui.tsx",
+    "./rpc": "./src/rpc.ts"
+  },
+  "dependencies": {
+    "@opencode/plugin": "^2.0.31",
+    "sherpa-onnx-node": "^1.13.8"
+  },
+  "peerDependencies": {
+    "@opentui/core": ">=0.5.17",
+    "@opentui/solid": ">=0.5.17",
+    "solid-js": ">=1.9.0"
+  },
+  "license": "MIT",
+  "author": "JuliusKB",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JuliusKB/opencode-voice.git"
+  },
+  "homepage": "https://github.com/JuliusKB/opencode-voice#readme",
+  "bugs": {
+    "url": "https://github.com/JuliusKB/opencode-voice/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "voice",
+    "dictation",
+    "speech-to-text",
+    "whisper",
+    "sherpa-onnx"
+  ],
+  "files": [
+    "src",
+    "index.ts",
+    "tui.ts",
+    "rpc.ts",
+    "tsconfig.json",
+    "LICENSE",
+    "README.md"
+  ],
+  "devDependencies": {
+    "@types/bun": "^1.4.3",
+    "solid-js": "1.9.12",
+    "typescript": "^5.9.3"
+  }
+}
