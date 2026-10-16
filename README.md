@@ -9,6 +9,12 @@ last take back (see [Recovery](#recovery-ctrlf9)).
 > **Status:** early release (0.x). Linux only, tested mainly with PipeWire.
 > Expect rough edges; see [Known issues](#known-issues-and-to-do).
 
+<p align="center">
+  <img src="https://raw.githubusercontent.com/JuliusKB/opencode-voice/main/pics/state_ready.png" alt="Voice panel in the sidebar: ready, model loaded" width="378">
+  &nbsp;&nbsp;
+  <img src="https://raw.githubusercontent.com/JuliusKB/opencode-voice/main/pics/state_recording.png" alt="Voice panel while recording, with live level meter" width="378">
+</p>
+
 ## Your voice stays on your machine
 
 This plugin is built around one rule: **nothing you say ever leaves your
@@ -105,6 +111,10 @@ bun test        # guard tests
 3. When it's ready, press **F9**, speak, **F9** again. Your transcript opens
    as a form: **submit sends it to the chat, esc discards.**
 
+<p align="center">
+  <img src="https://raw.githubusercontent.com/JuliusKB/opencode-voice/main/pics/menu_model_manager.png" alt="Model manager: installed and available whisper models with sizes" width="571">
+</p>
+
 That's the entire setup.
 
 ## Usage
@@ -116,6 +126,11 @@ That's the entire setup.
 | `ctrl+alt+v` | settings menu (configurable) |
 | `ctrl+f9` | restore a saved draft or retry a failed take (configurable) |
 | command palette → "Restore last transcript" | same recovery action |
+
+Your transcript arrives as a form in the chat. Edit it, then **enter**
+sends, **esc** discards:
+
+![Transcript draft form: submit sends, esc discards](https://raw.githubusercontent.com/JuliusKB/opencode-voice/main/pics/form_unsubmitted.png)
 
 Dictating while a draft form is open **extends** it (blank line between
 takes). Note: manual edits typed into the form are lost when a new take
@@ -140,6 +155,10 @@ means there was nothing on disk. The key is configurable under Shortcuts.
 ## Settings
 
 `ctrl+alt+v` opens the menu. The main page covers daily use:
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/JuliusKB/opencode-voice/main/pics/menu_main.png" alt="Voice settings menu: transcription, audio, behavior, shortcuts" width="571">
+</p>
 
 - **Transcription** — model (opens the model manager), language (for
   multilingual models; auto-detect by default)
