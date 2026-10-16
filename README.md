@@ -1,18 +1,40 @@
 # OpenCode Voice
 
-**Local-first voice dictation for [OpenCode](https://opencode.ai) (v2) —
-your audio and transcripts never leave your computer.** Whisper runs on your machine
-([sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx), in-process): no cloud
-APIs, no accounts, no audio or text sent anywhere.
-
+**Local-first voice dictation for [OpenCode](https://opencode.ai) (v2).**
 Press **F9**, speak, press **F9** again — your words appear as an editable
 draft in the chat you recorded from. Submit sends, esc discards, dictating
-again extends the draft.
+again extends the draft. If anything goes wrong, **`ctrl+f9`** brings your
+last take back (see [Recovery](#recovery-ctrlf9)).
+
+> **Status:** early release (0.x). Linux only, tested mainly with PipeWire.
+> Expect rough edges; see [Known issues](#known-issues-and-to-do).
+
+## Your voice stays on your machine
+
+This plugin is built around one rule: **nothing you say ever leaves your
+computer.** Whisper runs locally, in-process, via
+[sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx). There are no cloud
+speech APIs, no accounts, no API keys, no telemetry, and no server of mine or
+anyone else's involved in transcription.
+
+The plugin talks to the network in exactly two cases, both of them to
+GitHub, and neither of them carries audio or text:
+
+- opening the model manager fetches the list of available whisper models
+  from k2-fsa's release page
+- confirming a download fetches that model file
+
+After a model is installed the plugin works fully offline, on air-gapped
+machines and on confidential codebases. See [Data & privacy](#data--privacy)
+for exactly what is stored on disk.
+
+A remote transcription backend may be added in a future version. If it is,
+it will be opt-in and off by default. Local stays the default.
 
 ## Features
 
-- **Fully offline after model download** — transcription is local compute,
-  usable on air-gapped machines and confidential codebases
+- **Local and offline** — transcription is local compute; the only network
+  use is downloading models from GitHub on your explicit request
 - **Push-to-talk** (F9 by default) with a live level meter in the sidebar panel
 - **Proofread-before-send**: transcripts arrive as a prefilled form — edit,
   submit, or discard; a new take extends the open draft
@@ -64,6 +86,13 @@ Then point your config at the directory:
 }
 ```
 
+Before opening a pull request, run both checks:
+
+```sh
+bun run check   # strict type check
+bun test        # guard tests
+```
+
 </details>
 
 ## First run
@@ -91,6 +120,22 @@ That's the entire setup.
 Dictating while a draft form is open **extends** it (blank line between
 takes). Note: manual edits typed into the form are lost when a new take
 extends it — edit last, or submit between takes.
+
+## Recovery: `ctrl+f9`
+
+Nothing you dictate should be lost, even when something breaks. The plugin
+keeps your last take on disk until it is safely in a draft, and the draft
+until you submit it (details under [Data & privacy](#data--privacy)).
+**`ctrl+f9`**, or "Restore last transcript" in the command palette, brings
+it back:
+
+- after a failed transcription: re-transcribes the saved audio
+- after a crash, a restart, or an accidental esc: re-raises the saved draft
+  in the chat you are in
+- if both exist: restores the draft, then appends the re-transcribed take
+
+Press it whenever a recording or draft disappears. "Nothing to restore"
+means there was nothing on disk. The key is configurable under Shortcuts.
 
 ## Settings
 
@@ -137,11 +182,70 @@ transcripts are never sent with those requests.
 
 - The log page (settings menu → *Show log*) shows what the plugin is doing;
   enable *Debug logging* (Advanced → Debug) for pipeline detail.
+- "nothing heard" or empty transcripts: check your system input level. The
+  panel meter should move clearly while you speak; if it barely moves, raise
+  the microphone level in your system settings. The meter gain setting only
+  changes the display, not what Whisper hears.
 - "no recorder found": install PipeWire (`pw-record`), ALSA utils
   (`arecord`), or `ffmpeg`. The Recorder setting shows what's detected.
 - Transcription quality issues: try a larger model, or set the language
   explicitly instead of auto-detect (multilingual models only).
 
+## Known issues and to-do
+
+- **Occasional server restart when recording starts.** Sometimes the
+  OpenCode server restarts at the moment a recording begins. I have not
+  found the cause yet. The panel comes back on its own, and `ctrl+f9`
+  recovers any take or draft that was in flight; this bug is the reason that
+  key exists. Finding the cause is the top item on my list. If it happens to
+  you, the log page (settings → *Show log*) plus an issue describing what
+  you saw would help a lot.
+- **Drafts live in OpenCode's form dialog**, which was not designed for
+  this. An earlier private version of this tool, built for OpenCode v1,
+  appended the transcript straight into the prompt box through the v1 HTTP
+  API (`/tui/append-prompt` and `/tui/submit-prompt`). OpenCode v2 removed
+  those endpoints and does not expose an equivalent to plugins, so the form
+  is the workaround. Consequences: edits you
+  type into the form are lost when a new take extends it, and the form takes
+  keyboard focus from whatever dialog was open. A cleaner delivery path
+  (appending to the prompt again) depends on OpenCode exposing one. I intend
+  to request that upstream once I have exhausted what the current plugin
+  API can do and am sure I am not asking for something that already exists.
+  Until then, this is the known rough spot.
+- macOS and Windows audio capture are not implemented.
+
+## Who made this
+
+I am a coding enthusiast, not a professional developer. My background is
+Python, not TypeScript. I built this plugin for my own daily use first; it
+solved a problem for me, and I am publishing it because it may solve the
+same problem for someone else.
+
+## How this was built and tested
+
+I can read and review this code, but I did not write it fluently by hand:
+it was written with AI assistance and reviewed by me.
+
+What I vouch for is **behavior**. Every feature in this README has been
+exercised as a user would exercise it, on a real machine with real
+microphones: recording, transcribing, extending drafts, switching models,
+cancelling downloads, recovering a failed take. A small set of automated
+tests covers the guards that protect your data (model path safety, settings
+validation, draft handling).
+
+Because everything runs locally, the blast radius of a bug is small: a lost
+take, a bad transcript, a crashed panel. The safety net exists so a lost take
+can be recovered. The one risk local design does not remove is a compromised
+dependency, and that one is shared by every npm package you install.
+
+Found a bug or a behavior that contradicts this README?
+[Open an issue](https://github.com/JuliusKB/opencode-voice/issues) with what
+you did and what happened.
+
 ## License
 
 [MIT](./LICENSE) © JuliusKB
+
+---
+
+*Built for OpenCode, using OpenCode.*
