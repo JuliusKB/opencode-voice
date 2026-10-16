@@ -176,6 +176,7 @@ type VoiceMethods = {
     cpuPct: number
   }>
   recordStop(input: Record<string, never>): Promise<{ wav: string; seconds: number }>
+  engineUnload(input: Record<string, never>): Promise<{ unloaded: boolean }>
   recoverPeek(input: Record<string, never>): Promise<{ kind: "draft" | "audio" | "both" | "none"; text: string; wav: string }>
 }
 
@@ -533,11 +534,26 @@ async function settingsMenuLoop(context: Ctx) {
             .join(" "),
         } as { title: string; value: string; category: string },
         { title: "Show log", value: "@log", category: "More" },
+        {
+          title: stats().engineLoaded ? "Unload model from memory now" : "Unload model from memory (not loaded)",
+          value: "@unload",
+          category: "More",
+        },
         { title: "Reset everything to recommended", value: "@reset", category: "More" },
       ],
     })
     if (!choice) return
     menuCursor = choice
+    if (choice === "@unload") {
+      try {
+        const r = await voiceRpc(context).engineUnload({})
+        setStats({ ...stats(), engineLoaded: false })
+        notify(context, "info", { message: r.unloaded ? "model unloaded; next take reloads it" : "model was not loaded" })
+      } catch (err) {
+        notify(context, "error", { title: "could not unload", message: errText(err) })
+      }
+      continue
+    }
     if (choice === "@advanced") {
       await advancedMenu(context)
       continue

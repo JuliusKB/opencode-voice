@@ -64,6 +64,35 @@ it will be opt-in and off by default. Local stays the default.
 - OpenCode v2.0.31 or newer. The plugin runs inside OpenCode's bundled Bun runtime.
 - ~110 MB–1.9 GB disk per model (downloaded on first run, your choice of size).
 
+## Performance
+
+Transcription runs on the CPU, and the bar is low. This plugin is developed
+and used daily on a mid-range 2018 ultrabook: an Intel i5-8265U (4 cores,
+8 threads) with 12 GB of RAM. Measured there with the recommended `small.en`
+model on 6 threads:
+
+| `small.en`, i5-8265U, 6 threads | |
+|---|---|
+| transcription time | 0.25 to 0.5 × the length of the take (a 20 s take comes back in 5 to 10 s) |
+| model load, first take | 2 to 4 s, then kept in RAM (Behavior → Model residency) |
+| memory while the model is loaded | about 0.8 GB, measured in isolation |
+| memory after the model unloads | about 0.3 GB stays with the allocator; repeated load/unload cycles do not grow it |
+
+The `R` figure in the panel is the memory of the whole OpenCode server
+process, not the plugin's share. *Unload model from memory now* in the
+settings menu frees the model's part immediately.
+
+Anything newer or with more cores is faster. On weaker hardware, `base.en`
+or `tiny.en` trade some accuracy for speed; the model manager shows the
+size of each. Thread count is a setting if you want to leave cores free.
+
+More measurements will be added here as the plugin runs on more machines.
+If you have figures from yours, the model, CPU, and the transcription time
+for a take of known length are all it takes; open an issue with them.
+
+GPU-accelerated transcription is not supported and is not planned until the
+CPU path is fully stable. It may come later.
+
 ## Install
 
 Add the package to your opencode config (`~/.config/opencode/opencode.json`):

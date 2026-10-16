@@ -90,6 +90,20 @@ export const Voice = Rpc.define({
       },
       errors: {},
     },
+    // free the model's native memory now instead of waiting for residency;
+    // the next take reloads it (a few seconds)
+    engineUnload: {
+      input: { type: "object", additionalProperties: false },
+      output: {
+        type: "object",
+        properties: { unloaded: { type: "boolean" } },
+        required: ["unloaded"],
+        additionalProperties: false,
+      },
+      errors: {
+        busy: { type: "object", additionalProperties: false },
+      },
+    },
     devices: {
       input: { type: "object", additionalProperties: false },
       output: {

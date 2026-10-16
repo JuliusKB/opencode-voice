@@ -268,6 +268,15 @@ export default Plugin.define({
         modelInstalled: catalog.installed().has(settings.str("model")),
         ...processStats(),
       }),
+      engineUnload: async (_input, context) => {
+        if (busy) return context.error("busy", "Transcription is running; try again when it finishes", {})
+        const was = engineLoaded
+        if (was) {
+          log("engine unload requested by user")
+          unloadEngine()
+        }
+        return { unloaded: was }
+      },
       devices: async () => ({ devices: await capture.listDevices(), recorders: capture.recorderStates() }),
       modelsList: async () => ({ json: JSON.stringify(await catalog.list()) }),
       modelDownload: async (input) => {
