@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test"
+import { mkdtempSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { buildTui } from "../scripts/build-tui"
 import { remove } from "../src/catalog"
 import { formDelivery, type Client } from "../src/delivery"
 import { update } from "../src/settings"
@@ -61,6 +64,15 @@ describe("release safety guards", () => {
     await expect(delivery.push("session-1", "new take")).rejects.toThrow("transport")
     expect(creates).toBe(0)
   })
+
+  test("published panel is Solid-compiled, not generic JSX (npm installs would freeze)", async () => {
+    const out = await buildTui(mkdtempSync(`${tmpdir()}/voice-build-`))
+    const code = await Bun.file(out).text()
+    expect(code).not.toMatch(/\bjsxDEV?\(/)
+    expect(code).toMatch(/\bget when\(\)/)
+    expect(code).toMatch(/from "@opentui\/solid"/)
+    expect(code).toMatch(/from "@opencode\/plugin\/tui"/)
+  }, 30_000)
 
   test("only the take's own push carries its custody token to the server", async () => {
     const saves: Array<string | undefined> = []

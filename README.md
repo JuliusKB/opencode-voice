@@ -92,12 +92,17 @@ Then point your config at the directory:
 }
 ```
 
-Before opening a pull request, run both checks:
+Before opening a pull request, run the checks:
 
 ```sh
 bun run check   # strict type check
-bun test        # guard tests
+bun test        # guard tests, including a compile check of the panel
+bun run build   # compiles the panel to dist/tui.js (what npm users receive)
 ```
+
+The local checkout runs the panel from source; the published package ships
+it precompiled, because OpenCode compiles plugin files inside `node_modules`
+differently and a source `.tsx` panel would render once and never update.
 
 </details>
 

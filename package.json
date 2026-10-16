@@ -1,15 +1,17 @@
 {
   "name": "@juliuskb/opencode-voice",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "Local-first voice dictation for OpenCode with push-to-talk Whisper transcription",
   "type": "module",
   "scripts": {
     "check": "tsc -p tsconfig.json",
-    "test": "bun test"
+    "test": "bun test",
+    "build": "bun run scripts/build-tui.ts",
+    "prepublishOnly": "bun run check && bun test && bun run build"
   },
   "exports": {
     ".": "./src/index.ts",
-    "./tui": "./src/tui.tsx",
+    "./tui": "./dist/tui.js",
     "./rpc": "./src/rpc.ts"
   },
   "dependencies": {
@@ -45,6 +47,7 @@
   ],
   "files": [
     "src",
+    "dist",
     "index.ts",
     "tui.ts",
     "rpc.ts",
@@ -53,6 +56,8 @@
     "README.md"
   ],
   "devDependencies": {
+    "@opentui/core": "0.6.6",
+    "@opentui/solid": "0.6.6",
     "@types/bun": "^1.4.3",
     "solid-js": "1.9.12",
     "typescript": "^5.9.3"

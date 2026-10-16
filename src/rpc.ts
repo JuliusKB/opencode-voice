@@ -20,6 +20,12 @@ export const Voice = Rpc.define({
       output: { type: "object", additionalProperties: false },
       errors: {
         busy: { type: "object", additionalProperties: false },
+        model_missing: {
+          type: "object",
+          properties: { model: { type: "string" } },
+          required: ["model"],
+          additionalProperties: false,
+        },
       },
     },
     recordStart: {

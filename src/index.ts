@@ -39,12 +39,15 @@ function processStats(): { rssMb: number; cpuPct: number } {
  * everything that must exist once per server rather than per terminal.
  */
 export default Plugin.define({
-  id: "voice",
+  id: "@juliuskb/opencode-voice",
   async setup(ctx) {
     // settings live in a JSON file in the data dir (see settings.ts for why
     // opencode's location-scoped plugin storage was abandoned)
     await settings.hydrate()
     initLog()
+    // a previous server that died mid-take may have left the mic open
+    const stale = capture.sweepStale()
+    if (stale) log(`capture: released ${stale} stale recorder(s) from a previous server`)
 
     let worker: Worker | null = null
     let engineLoaded = false
@@ -145,9 +148,18 @@ export default Plugin.define({
       transcribe: async (input, context) => {
         const { wav, client } = input as { wav: string; client: string }
         if (busy || capture.isRecording()) return context.error("busy", "Voice capture or transcription is already running", {})
+        // Never decode against a model that is not fully on disk: a stale
+        // in-memory recognizer (files deleted or swapped underneath it) or a
+        // half-downloaded directory must fail loudly, not "succeed" empty.
+        const model = settings.str("model")
+        if (!catalog.installed().has(model)) {
+          unloadEngine()
+          log(`transcribe refused: model ${model} is not installed`)
+          return context.error("model_missing", `Model ${model} is not installed`, { model })
+        }
         busy = true
         const id = ++jobSeq
-        log(`transcribe start (model ${settings.str("model")})`)
+        log(`transcribe start (model ${model})`)
         const w = ensureWorker()
         const cleanup = () => {
           busy = false

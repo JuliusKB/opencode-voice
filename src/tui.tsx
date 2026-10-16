@@ -56,7 +56,9 @@ import { createEffect, createSignal, For, onCleanup, Show } from "solid-js"
 
 /** TUI half: live panel, keymap, settings/model menus, and draft delivery. */
 
-type VoiceState = "setup" | "idle" | "recording" | "transcribing" | "error"
+// "disconnected": the status poll has failed repeatedly, so the panel would
+// otherwise freeze on a stale but plausible state. Shown honestly instead.
+type VoiceState = "setup" | "idle" | "recording" | "transcribing" | "error" | "disconnected"
 
 // Fail closed during first-run hydration: until status proves the configured
 // model exists, F9 opens model setup rather than attempting a doomed capture.
@@ -639,16 +641,29 @@ function VoicePanel() {
   })
   createEffect(() => {
     const ms = Math.max(250, sNum("statsIntervalMs") || 2000)
+    // The server is the source of truth. Reconcile on every poll so the panel
+    // is eventually consistent even if an event was missed or another window
+    // acted; after repeated failures say "disconnected" rather than freeze on
+    // a stale but plausible state.
+    let misses = 0
     const refresh = () => {
       voiceRpc(context)
         .status({})
         .then((st) => {
+          misses = 0
           setStats(st)
-          const m = (st as { modelInstalled?: boolean }).modelInstalled
+          const m = st.modelInstalled
+          if (state() === "disconnected") setState(m ? "idle" : "setup")
           if (m === false && (state() === "idle" || state() === "error")) setState("setup")
           else if (m === true && state() === "setup") setState("idle")
+          if (state() === "recording" && !st.recording) {
+            setState("idle")
+            recordingSessionID = null
+          }
         })
-        .catch(() => {})
+        .catch(() => {
+          if (++misses >= 3 && state() !== "disconnected") setState("disconnected")
+        })
     }
     refresh()
     const poll = setInterval(refresh, ms)
@@ -772,12 +787,16 @@ function VoicePanel() {
         <Action kbd={recordKey()} label="record again" />
         <Action kbd={settingsKey()} label="menu" />
       </Show>
+      <Show when={state() === "disconnected"}>
+        <text fg={base}>✗ voice server unreachable</text>
+        <text fg={muted}>reload the plugin or restart opencode</text>
+      </Show>
     </box>
   )
 }
 
 export default Plugin.define({
-  id: "voice.tui",
+  id: "@juliuskb/opencode-voice/tui",
   setup(context) {
     const onCleanupTui: Array<() => void> = []
     const disposeRoute = context.ui.router.register({
@@ -801,6 +820,10 @@ export default Plugin.define({
             const rpc = voiceRpc(context)
             if (state() === "setup") {
               void modelManager(context)
+              return
+            }
+            if (state() === "disconnected") {
+              notify(context, "error", { title: "voice server unreachable", message: "reload the plugin or restart opencode" })
               return
             }
             if (state() === "transcribing") {

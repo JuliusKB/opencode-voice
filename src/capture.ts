@@ -72,6 +72,59 @@ export async function listDevices(): Promise<string[]> {
 
 let current: { proc: ReturnType<typeof Bun.spawn>; path: string; recorder: string } | null = null
 
+// ---- never leave a microphone open -------------------------------------
+// Bun does not kill child processes when the server dies, so a crash, a
+// SIGKILL or a hot reload that skips cleanup would orphan the recorder with
+// the mic held open indefinitely. Three layers close that:
+//   1. the recorder is exec'd under a tiny shell watchdog that kills it as
+//      soon as the server process disappears (covers crashes and SIGKILL);
+//   2. a normal process exit kills it directly;
+//   3. start() and plugin setup sweep recorders from an earlier server that
+//      still target our own output files (belt and braces for 1).
+const slotPrefixes = () => [`${dataDir()}/last-take.wav`, `${tmpdir()}/opencode-voice-`]
+
+// $1 = server pid, $$ = our pid (kept across exec). The background loop
+// exits on its own once either the server or the recorder is gone.
+const WATCHDOG =
+  'P=$1; R=$$; shift; ( while kill -0 "$P" 2>/dev/null && kill -0 "$R" 2>/dev/null; do sleep 1; done; ' +
+  'kill -0 "$R" 2>/dev/null && kill -TERM "$R" 2>/dev/null ) & exec "$@"'
+
+function guarded(args: string[]): string[] {
+  if (process.platform === "win32" || !Bun.which("sh")) return args
+  return ["sh", "-c", WATCHDOG, "sh", String(process.pid), ...args]
+}
+
+/** Kill recorder processes left behind by a previous server that died mid-take. */
+export function sweepStale(): number {
+  if (process.platform === "win32" || !Bun.which("pgrep")) return 0
+  const p = Bun.spawnSync(["pgrep", "-a", "-f", "pw-record|arecord|ffmpeg"], { stdout: "pipe", stderr: "ignore" })
+  if (!p.success) return 0
+  const own = current?.proc.pid
+  let killed = 0
+  for (const line of p.stdout.toString().split("\n")) {
+    const pid = Number(line.split(" ", 1)[0])
+    if (!pid || pid === own) continue
+    if (!slotPrefixes().some((prefix) => line.includes(prefix))) continue
+    try {
+      process.kill(pid, "SIGKILL")
+      killed++
+    } catch {
+      // already gone
+    }
+  }
+  if (killed) debug(`capture: killed ${killed} stale recorder process(es) from a previous server`)
+  return killed
+}
+
+process.on("exit", () => {
+  if (!current) return
+  try {
+    current.proc.kill("SIGKILL")
+  } catch {
+    // already gone
+  }
+})
+
 // which tools even make sense per OS (pw-record/arecord are Linux audio
 // stacks; ffmpeg is the cross-platform fallback)
 const TOOL_PLATFORMS: Record<string, string[]> = {
@@ -118,7 +171,8 @@ export function start(): { recorder: string } {
   } else {
     path = `${tmpdir()}/opencode-voice-${Date.now()}.wav`
   }
-  const proc = Bun.spawn(recorder.args(path), { stdout: "ignore", stderr: "pipe" })
+  sweepStale()
+  const proc = Bun.spawn(guarded(recorder.args(path)), { stdout: "ignore", stderr: "pipe" })
   current = { proc, path, recorder: recorder.name }
   return { recorder: recorder.name }
 }
