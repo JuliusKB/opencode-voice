@@ -1,3 +1,7 @@
+/** @jsxImportSource @opentui/solid */
+// The pragma is load-bearing: when installed from npm, this file is
+// transpiled by the host's Bun, which ignores tsconfig.json inside
+// node_modules and would otherwise look for react/jsx-dev-runtime.
 import { Plugin, usePlugin } from "@opencode/plugin/tui"
 import { Voice } from "./rpc"
 import { formDelivery, type Client } from "./delivery"
