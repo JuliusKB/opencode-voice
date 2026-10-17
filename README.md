@@ -76,7 +76,7 @@ model on 6 threads:
 | transcription time | 0.25 to 0.5 × the length of the take (a 20 s take comes back in 5 to 10 s) |
 | model load, first take | 2 to 4 s, then kept in RAM (Behavior → Model residency) |
 | memory while the model is loaded | about 0.8 GB, measured in isolation |
-| memory after the model unloads | about 0.3 GB stays with the allocator; repeated load/unload cycles do not grow it |
+| memory after the model unloads | 0.35 to 0.45 GB stays with the allocator; repeated load/unload cycles do not grow it |
 
 The `R` figure in the panel is the memory of the whole OpenCode server
 process, not the plugin's share. *Unload model from memory now* in the

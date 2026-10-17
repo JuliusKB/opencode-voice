@@ -120,6 +120,24 @@ export function isLoaded(): boolean {
   return recognizer !== null
 }
 
+/**
+ * Drop the native objects so their finalizers can free the model memory.
+ * Terminating the worker is NOT enough on the host's Bun (1.4.2): the
+ * worker's threads and the model stay resident after terminate(), so the
+ * worker lives for the whole server lifetime and unloads in place.
+ */
+export function unload(): boolean {
+  const had = recognizer !== null
+  recognizer = null
+  vad = null
+  try {
+    Bun.gc(true)
+  } catch {
+    // no synchronous gc available: finalizers run on the next collection
+  }
+  return had
+}
+
 /** Speech segments via VAD; null means VAD unavailable, [] means silence. */
 function segment(samples: Float32Array): Float32Array[] | null {
   const detector = loadVad()

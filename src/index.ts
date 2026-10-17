@@ -10,6 +10,7 @@ type WorkerMsg =
   | { type: "progress"; id: number; processedSec: number; totalSec: number }
   | { type: "done"; id: number; text: string; loadMs: number; transcribeMs: number; wasLoaded: boolean }
   | { type: "error"; id: number; message: string }
+  | { type: "unloaded"; had: boolean }
   | { type: "log"; line: string }
 import * as settings from "./settings"
 import * as catalog from "./catalog"
@@ -64,7 +65,16 @@ export default Plugin.define({
     const ensureWorker = (): Worker => {
       if (worker) return worker
       worker = new Worker(new URL("./engine-worker.ts", import.meta.url).href)
-      worker.onmessage = (event: MessageEvent<WorkerMsg>) => jobHandler?.(event.data)
+      worker.onmessage = (event: MessageEvent<WorkerMsg>) => {
+        if (event.data.type === "unloaded") {
+          if (event.data.had) log("engine unloaded (model released in place)")
+          const waiters = unloadWaiters
+          unloadWaiters = []
+          for (const resolve of waiters) resolve()
+          return
+        }
+        jobHandler?.(event.data)
+      }
       const fail = (message: string) => {
         const failed = worker
         worker = null
@@ -81,14 +91,25 @@ export default Plugin.define({
       worker.onmessageerror = () => fail("worker message could not be decoded")
       return worker
     }
+    // The worker lives for the whole server lifetime; "unload" drops the model
+    // inside it (see engine-worker.ts for why terminate() is not an option on
+    // the host's Bun). Only called when no job is running.
+    let unloadWaiters: Array<() => void> = []
     const unloadEngine = () => {
-      if (!worker) return
-      worker.terminate()
-      worker = null
       engineLoaded = false
-      busy = false
-      jobHandler = null
-      log("engine unloaded (worker terminated)")
+      if (!worker) return
+      worker.postMessage({ type: "unload" })
+    }
+    const unloadEngineAndWait = (timeoutMs = 3000): Promise<void> => {
+      if (!worker) return Promise.resolve()
+      return new Promise((resolve) => {
+        const timer = setTimeout(resolve, timeoutMs)
+        unloadWaiters.push(() => {
+          clearTimeout(timer)
+          resolve()
+        })
+        unloadEngine()
+      })
     }
     const reloadEngineWhenSafe = () => {
       if (busy) {
@@ -181,6 +202,7 @@ export default Plugin.define({
             log(msg.line)
             return
           }
+          if (msg.type === "unloaded") return // handled in worker.onmessage
           if (msg.id !== id) return
           if (msg.type === "progress") {
             void registration.events.emit("progress", { client, processedSec: msg.processedSec, totalSec: msg.totalSec })
@@ -398,7 +420,14 @@ export default Plugin.define({
       if (ownsCapture) await capture.cancel()
       for (const name of ownedDownloads) catalog.cancel(name)
       ownedDownloads.clear()
-      unloadEngine()
+      // release the model first; terminate() alone would leak it on Bun 1.4.x
+      await unloadEngineAndWait()
+      try {
+        worker?.terminate()
+      } catch {
+        // already stopped
+      }
+      worker = null
     }
   },
 })
