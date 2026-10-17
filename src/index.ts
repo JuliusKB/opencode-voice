@@ -341,7 +341,10 @@ export default Plugin.define({
         catalog.remove(name)
         return {}
       },
-      logGet: async () => ({ json: JSON.stringify(dump()) }),
+      logGet: async (input) => {
+        const file = (input as { file?: string }).file === "previous" ? "previous" : "current"
+        return { json: JSON.stringify(dump(file)) }
+      },
       settingsGet: async () => ({ json: JSON.stringify(settings.current()) }),
       settingsSet: async (input) => {
         const { json } = input as { json: string }

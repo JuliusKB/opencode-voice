@@ -1,6 +1,6 @@
 {
   "name": "@juliuskb/opencode-voice",
-  "version": "0.0.5",
+  "version": "0.0.6",
   "description": "Local-first voice dictation for OpenCode with push-to-talk Whisper transcription",
   "type": "module",
   "scripts": {
@@ -16,12 +16,12 @@
   },
   "dependencies": {
     "@opencode/plugin": "^2.0.31",
-    "sherpa-onnx-node": "^1.13.8"
+    "sherpa-onnx-node": "1.13.8"
   },
   "peerDependencies": {
-    "@opentui/core": ">=0.5.17",
-    "@opentui/solid": ">=0.5.17",
-    "solid-js": ">=1.9.0"
+    "@opentui/core": ">=0.5.17 <0.7.0",
+    "@opentui/solid": ">=0.5.17 <0.7.0",
+    "solid-js": ">=1.9.0 <2.0.0"
   },
   "license": "MIT",
   "author": "JuliusKB",

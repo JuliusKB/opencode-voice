@@ -61,7 +61,7 @@ it will be opt-in and off by default. Local stays the default.
 - **Linux** (macOS/Windows planned). Audio capture requires `pw-record`
   (PipeWire), `arecord` (ALSA), or `ffmpeg`; archive extraction requires
   `tar` with bzip2 support. These are already present on most distributions.
-- OpenCode v2.0.31 or newer. The plugin runs inside OpenCode's bundled Bun runtime.
+- OpenCode v2.0.31 or newer. The plugin runs inside OpenCode's bundled Bun runtime; each release is tested against supported current OpenCode versions.
 - ~110 MB–1.9 GB disk per model (downloaded on first run, your choice of size).
 
 ## Performance
@@ -244,17 +244,10 @@ transcripts are never sent with those requests.
 - Transcription quality issues: try a larger model, or set the language
   explicitly instead of auto-detect (multilingual models only).
 
-## Known issues and to-do
+## Current limitations and planned work
 
-- **Occasional server restart when a take is transcribed.** Sometimes the
-  OpenCode server crashes at the moment a recording ends and transcription
-  begins; the TUI restarts it. On my machine the system crash handler
-  records it as a segmentation fault of the server process; what inside it
-  faults is not yet identified. The panel comes back on its own, and
-  `ctrl+f9` recovers any take or draft that was in flight. Finding the
-  cause is the top item on my list. If
-  it happens to you, the log page (settings → *Show log*) plus an issue
-  describing what you saw would help a lot.
+No unresolved server-crash issue is currently known.
+
 - **Drafts live in OpenCode's form dialog**, which was not designed for
   this. An earlier private version of this tool, built for OpenCode v1,
   appended the transcript straight into the prompt box through the v1 HTTP
@@ -268,6 +261,9 @@ transcripts are never sent with those requests.
   API can do and am sure I am not asking for something that already exists.
   Until then, this is the known rough spot.
 - macOS and Windows audio capture are not implemented.
+- **Live transcription** is planned: sliding-window partials will give a
+  live, revisable transcript while recording, with the final transcript
+  retaining the current proofread-before-send flow.
 
 ## Who made this
 

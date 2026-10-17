@@ -58,6 +58,7 @@ type VadHandle = {
   front(): { start: number; samples: Float32Array }
   pop(): void
   clear(): void
+  reset(): void
   flush(): void
 }
 
@@ -142,7 +143,9 @@ export function unload(): boolean {
 function segment(samples: Float32Array): Float32Array[] | null {
   const detector = loadVad()
   if (!detector) return null
-  detector.clear()
+  // Each take is independent. clear() only discards completed segments;
+  // reset() also clears the native VAD model and circular-buffer state.
+  detector.reset()
   const out: Float32Array[] = []
   const drain = () => {
     while (!detector.isEmpty()) {

@@ -173,7 +173,11 @@ export const Voice = Rpc.define({
       errors: {},
     },
     logGet: {
-      input: { type: "object", additionalProperties: false },
+      input: {
+        type: "object",
+        properties: { file: { type: "string", description: "current or previous" } },
+        additionalProperties: false,
+      },
       output: {
         type: "object",
         properties: { json: { type: "string" } },

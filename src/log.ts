@@ -8,7 +8,7 @@
  * timings, VAD segmentation, chunk decodes. NEVER speech content — no
  * transcript text, no form text, under any level.
  */
-import { appendFileSync, mkdirSync, renameSync, statSync, writeFileSync } from "node:fs"
+import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs"
 import { bool, dataDir } from "./settings"
 
 const MAX_LINES = 500
@@ -67,6 +67,14 @@ export function debug(message: string): void {
   log(`[debug] ${message}`)
 }
 
-export function dump(): { path: string | null; lines: string[] } {
-  return { path: filePath, lines: [...lines] }
+export function dump(file: "current" | "previous" = "current"): { path: string | null; lines: string[] } {
+  const path = file === "previous" && filePath ? `${filePath}.prev` : filePath
+  if (!path) return { path: null, lines: [...lines] }
+  try {
+    return { path, lines: readFileSync(path, "utf8").split("\n").filter(Boolean) }
+  } catch {
+    return file === "previous"
+      ? { path, lines: ["(no previous log file)"] }
+      : { path: null, lines: [...lines] }
+  }
 }

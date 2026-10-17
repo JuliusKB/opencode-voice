@@ -162,7 +162,7 @@ type VoiceMethods = {
   settingsGet(input: Record<string, never>): Promise<JsonResult>
   settingsReset(input: Record<string, never>): Promise<JsonResult>
   modelsList(input: Record<string, never>): Promise<JsonResult>
-  logGet(input: Record<string, never>): Promise<JsonResult>
+  logGet(input: { file?: "current" | "previous" }): Promise<JsonResult>
   devices(input: Record<string, never>): Promise<{
     devices: string[]
     recorders: Array<{ name: string; state: string }>
@@ -549,6 +549,7 @@ async function settingsMenuLoop(context: Ctx) {
         const r = await voiceRpc(context).engineUnload({})
         setStats({ ...stats(), engineLoaded: false })
         notify(context, "info", { message: r.unloaded ? "model unloaded; next take reloads it" : "model was not loaded" })
+        return // one-shot action: return to the panel's now-cold state
       } catch (err) {
         notify(context, "error", { title: "could not unload", message: errText(err) })
       }
@@ -585,17 +586,22 @@ const [lastSessionID, setLastSessionID] = createSignal<string | null>(null)
 
 const [logLines, setLogLines] = createSignal<string[]>([])
 const [logFile, setLogFile] = createSignal<string | null>(null)
+const [logSource, setLogSource] = createSignal<"current" | "previous">("current")
 
 function LogPage() {
   const context = usePlugin()
-  voiceRpc(context)
-    .logGet({})
-    .then((r) => {
-      const d = JSON.parse(r.json) as { path: string | null; lines: string[] }
-      setLogFile(d.path)
-      setLogLines(d.lines)
-    })
-    .catch(() => setLogLines(["(log unavailable)"]))
+  const loadLog = (file = logSource()) => {
+    setLogSource(file)
+    void voiceRpc(context)
+      .logGet({ file })
+      .then((r) => {
+        const d = JSON.parse(r.json) as { path: string | null; lines: string[] }
+        setLogFile(d.path)
+        setLogLines(d.lines)
+      })
+      .catch(() => setLogLines(["(log unavailable)"]))
+  }
+  loadLog()
   const goBack = () => {
     const sid = lastSessionID()
     context.ui.router.navigate(sid ? { type: "session", sessionID: sid } : { type: "home" })
@@ -605,14 +611,21 @@ function LogPage() {
   // disposed with the page, so esc is captured only while the log is open
   context.keymap.layer(() => ({
     mode: "global",
-    commands: [{ id: "voice.log.back", title: "Voice log: back", bind: "escape", run: () => goBack() }],
+    commands: [
+      { id: "voice.log.back", title: "Voice log: back", bind: "escape", run: () => goBack() },
+      {
+        id: "voice.log.switch", title: "Voice log: switch current/previous", bind: "tab",
+        run: () => loadLog(logSource() === "current" ? "previous" : "current"),
+      },
+    ],
   }))
   return (
-    <box border borderStyle="rounded" borderColor={context.theme.text.muted} title="Voice · log">
+    <box border borderStyle="rounded" borderColor={context.theme.text.muted} title={`Voice · ${logSource()} log`} flexDirection="column" flexGrow={1}>
       <text fg={context.theme.text.base}>{logFile() ? `file: ${logFile()}` : "in-memory only (file unavailable)"}</text>
-      <text>{" "}</text>
-      <For each={logLines()}>{(line) => <text fg={context.theme.text.muted}>{line}</text>}</For>
-      <text fg={context.theme.text.base}>— end of log · esc to go back —</text>
+      <scrollbox flexGrow={1} scrollY stickyScroll stickyStart="bottom">
+        <For each={logLines()}>{(line) => <text fg={context.theme.text.muted}>{line}</text>}</For>
+      </scrollbox>
+      <text fg={context.theme.text.base}>— ↑/↓ scroll · tab switch · esc back —</text>
     </box>
   )
 }
