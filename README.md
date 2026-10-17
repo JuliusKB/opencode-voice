@@ -246,13 +246,15 @@ transcripts are never sent with those requests.
 
 ## Known issues and to-do
 
-- **Occasional server restart when recording starts.** Sometimes the
-  OpenCode server restarts at the moment a recording begins. I have not
-  found the cause yet. The panel comes back on its own, and `ctrl+f9`
-  recovers any take or draft that was in flight; this bug is the reason that
-  key exists. Finding the cause is the top item on my list. If it happens to
-  you, the log page (settings → *Show log*) plus an issue describing what
-  you saw would help a lot.
+- **Occasional server restart when a take is transcribed.** Sometimes the
+  OpenCode server crashes at the moment a recording ends and transcription
+  begins; the TUI restarts it. On my machine the system crash handler
+  records it as a segmentation fault of the server process; what inside it
+  faults is not yet identified. The panel comes back on its own, and
+  `ctrl+f9` recovers any take or draft that was in flight. Finding the
+  cause is the top item on my list. If
+  it happens to you, the log page (settings → *Show log*) plus an issue
+  describing what you saw would help a lot.
 - **Drafts live in OpenCode's form dialog**, which was not designed for
   this. An earlier private version of this tool, built for OpenCode v1,
   appended the transcript straight into the prompt box through the v1 HTTP
