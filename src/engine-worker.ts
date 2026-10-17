@@ -2,8 +2,9 @@
  * Decode worker: sherpa's decode is a SYNCHRONOUS native call that would
  * freeze the opencode server's event loop for seconds per chunk (observed:
  * dropped RPC sockets, stalled UI). Running the engine in a Worker keeps the
- * server responsive; terminating the worker is also the guaranteed way to
- * release the model's native memory (residency enforcement).
+ * server responsive. That is its only job: the worker lives as long as the
+ * server, and the model is released by the "unload" message below, never by
+ * terminating the worker.
  *
  * Protocol (postMessage both ways):
  *   in : { type: "transcribe", id, wav, settings }
