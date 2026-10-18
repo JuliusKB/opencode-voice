@@ -254,20 +254,50 @@ export const Voice = Rpc.define({
       },
       output: {
         type: "object",
-        properties: { announce: { type: "boolean" } },
-        required: ["announce"],
+        properties: { token: { type: "string" } },
+        required: ["token"],
         additionalProperties: false,
       },
+      errors: {},
+    },
+    updateRenew: {
+      input: {
+        type: "object",
+        properties: { version: { type: "string" }, token: { type: "string" } },
+        required: ["version", "token"],
+        additionalProperties: false,
+      },
+      output: {
+        type: "object",
+        properties: { renewed: { type: "boolean" } },
+        required: ["renewed"],
+        additionalProperties: false,
+      },
+      errors: {},
+    },
+    updateAcknowledge: {
+      input: {
+        type: "object",
+        properties: { version: { type: "string" } },
+        required: ["version"],
+        additionalProperties: false,
+      },
+      output: { type: "object", additionalProperties: false },
       errors: {},
     },
     updateSettle: {
       input: {
         type: "object",
-        properties: { version: { type: "string" }, acknowledged: { type: "boolean" } },
-        required: ["version", "acknowledged"],
+        properties: { version: { type: "string" }, token: { type: "string" }, acknowledged: { type: "boolean" } },
+        required: ["version", "token", "acknowledged"],
         additionalProperties: false,
       },
-      output: { type: "object", additionalProperties: false },
+      output: {
+        type: "object",
+        properties: { settled: { type: "boolean" } },
+        required: ["settled"],
+        additionalProperties: false,
+      },
       errors: {},
     },
     level: {
@@ -372,14 +402,6 @@ export const Voice = Rpc.define({
           totalSec: { type: "number" },
         },
         required: ["client", "processedSec", "totalSec"],
-        additionalProperties: false,
-      },
-    },
-    update: {
-      schema: {
-        type: "object",
-        properties: { json: { type: "string" } },
-        required: ["json"],
         additionalProperties: false,
       },
     },

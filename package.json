@@ -39,7 +39,8 @@
     "check": "tsc -p tsconfig.json",
     "test": "bun test",
     "build": "bun run scripts/build-tui.ts",
-    "prepublishOnly": "bun run check && bun test && bun run build"
+    "prepack": "bun run build >/dev/null",
+    "prepublishOnly": "bun run check && bun test"
   },
   "exports": {
     ".": "./src/index.ts",

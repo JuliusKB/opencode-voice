@@ -346,7 +346,7 @@ export default Plugin.define({
         const file = (input as { file?: string }).file === "previous" ? "previous" : "current"
         return { json: JSON.stringify(dump(file)) }
       },
-      settingsGet: async () => ({ json: JSON.stringify(settings.current()) }),
+      settingsGet: async () => ({ json: JSON.stringify(await settings.hydrate()) }),
       settingsSet: async (input) => {
         const { json } = input as { json: string }
         const patch = JSON.parse(json) as settings.Settings
@@ -363,26 +363,36 @@ export default Plugin.define({
         // engine-shaping settings only take effect on a fresh recognizer
         if (Object.keys(patch).some((k) => ["model", "language", "threads", "vadThreshold", "vadMinSilenceSec", "vadMinSpeechSec", "vadMaxSpeechSec", "vadEnabled"].includes(k)))
           reloadEngineWhenSafe()
-        if ("updateCheck" in patch && String((patch as Record<string, unknown>).updateCheck) === "false") await updates.clear()
+        if ("updateCheck" in patch) await updates.clear()
         return { json: JSON.stringify(next) }
       },
       settingsReset: async () => {
         const next = await settings.reset()
+        await updates.clear()
         reloadEngineWhenSafe()
         return { json: JSON.stringify(next) }
       },
-      updateStatus: async () => ({ json: JSON.stringify(updates.status()) }),
+      updateStatus: async () => ({
+        json: JSON.stringify(updates.status("cached", settings.persistedBool("updateCheck"))),
+      }),
       updateRefresh: async (input) => {
         const force = Boolean((input as { force?: boolean }).force)
-        return { json: JSON.stringify(await updates.check(settings.bool("updateCheck") || force, force)) }
+        return { json: JSON.stringify(await updates.check(settings.persistedBool("updateCheck"), force)) }
       },
       updateClaim: async (input) => ({
-        announce: await updates.claimAnnouncement((input as { version: string }).version),
+        token: (await updates.claimAnnouncement((input as { version: string }).version)) ?? "",
       }),
-      updateSettle: async (input) => {
-        const value = input as { version: string; acknowledged: boolean }
-        await updates.settleAnnouncement(value.version, value.acknowledged)
+      updateRenew: async (input) => {
+        const value = input as { version: string; token: string }
+        return { renewed: await updates.renewAnnouncement(value.version, value.token) }
+      },
+      updateAcknowledge: async (input) => {
+        await updates.acknowledgeAnnouncement((input as { version: string }).version)
         return {}
+      },
+      updateSettle: async (input) => {
+        const value = input as { version: string; token: string; acknowledged: boolean }
+        return { settled: await updates.settleAnnouncement(value.version, value.token, value.acknowledged) }
       },
       level: async () => ({ level: capture.level(), recording: capture.isRecording() }),
       recordCancel: async () => {
@@ -430,13 +440,6 @@ export default Plugin.define({
         return { kind: "none", text: "", wav: "" }
       },
     })
-
-    // Optional metadata-only check. It is cached globally on disk, never
-    // blocks startup, and can only inform the user — installation stays manual.
-    void updates
-      .check(settings.bool("updateCheck"))
-      .then((info) => registration.events.emit("update", { json: JSON.stringify(info) }))
-      .catch(() => {})
 
     return async () => {
       clearInterval(residencyTick)

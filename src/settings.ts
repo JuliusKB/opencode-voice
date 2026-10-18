@@ -9,6 +9,8 @@
  */
 
 import { cpus } from "node:os"
+import { randomUUID } from "node:crypto"
+import { mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs"
 
 export type SettingKind = "string" | "number" | "boolean" | "choice"
 
@@ -190,6 +192,7 @@ export function dataDir(): string {
 // instance answers. One file on disk has no such ambiguity, and it joins the
 // delete-dir-equals-uninstall story.
 const settingsFile = () => `${dataDir()}/settings.json`
+const settingsLock = () => `${dataDir()}/settings.lock`
 
 let cache: Settings = { ...DEFAULTS }
 
@@ -210,25 +213,76 @@ export function bool(key: string): boolean {
   return cache[key] === true || cache[key] === "true"
 }
 
+/** Read one boolean from the shared file, bypassing this module instance's cache. */
+export function persistedBool(key: string): boolean {
+  const spec = SPECS.find((entry) => entry.key === key && entry.kind === "boolean")
+  if (!spec) throw new Error(`unknown boolean setting: ${key}`)
+  try {
+    const stored = JSON.parse(readFileSync(settingsFile(), "utf8")) as Record<string, unknown>
+    const value = validValue(spec, stored[key])
+    return typeof value === "boolean" ? value : spec.recommended === true
+  } catch (error) {
+    // No file means first run, so use the documented default. Any other
+    // read/parse failure fails closed: uncertainty must not enable network IO.
+    return (error as NodeJS.ErrnoException)?.code === "ENOENT" ? spec.recommended === true : false
+  }
+}
+
 /** Worker-side: adopt a settings snapshot sent from the main thread. */
 export function apply(snapshot: Settings): void {
   cache = normalized(snapshot)
 }
 
-export async function hydrate(): Promise<Settings> {
+function readSnapshot(): Settings {
   try {
-    const stored = (await Bun.file(settingsFile()).json()) as Record<string, unknown>
-    cache = normalized(stored)
-  } catch {
-    cache = { ...DEFAULTS } // no file yet, or unreadable: recommended values
+    const stored = JSON.parse(readFileSync(settingsFile(), "utf8")) as Record<string, unknown>
+    return normalized(stored)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return { ...DEFAULTS }
+    // Preserve privacy on corruption/permission failures. Other values fall
+    // back to defaults, but an unrelated later save must not enable network IO.
+    return { ...DEFAULTS, updateCheck: false }
   }
+}
+
+export async function hydrate(): Promise<Settings> {
+  // Synchronous atomic-file read: no await point can race another operation
+  // and replace the module cache after that operation has committed a change.
+  cache = readSnapshot()
   return cache
 }
 
-async function persist(): Promise<void> {
+async function withSettingsLock<T>(fn: () => T | Promise<T>): Promise<T> {
+  mkdirSync(dataDir(), { recursive: true })
+  for (let attempt = 0; ; attempt++) {
+    try {
+      mkdirSync(settingsLock())
+      break
+    } catch {
+      try {
+        if (Date.now() - statSync(settingsLock()).mtimeMs > 15_000)
+          rmSync(settingsLock(), { recursive: true, force: true })
+      } catch {
+        // lock disappeared between checks
+      }
+      if (attempt >= 100) throw new Error("settings are locked")
+      await Bun.sleep(20)
+    }
+  }
+  try {
+    return await fn()
+  } finally {
+    rmSync(settingsLock(), { recursive: true, force: true })
+  }
+}
+
+function persist(snapshot: Settings): void {
   // the FULL snapshot, not drift: if a plugin update changes a recommended
   // value, the user's effective settings must not silently change with it
-  await Bun.write(settingsFile(), JSON.stringify(cache, null, 2))
+  mkdirSync(dataDir(), { recursive: true })
+  const tmp = `${settingsFile()}.tmp-${randomUUID()}`
+  writeFileSync(tmp, `${JSON.stringify(snapshot, null, 2)}\n`)
+  renameSync(tmp, settingsFile())
 }
 
 export async function update(patch: Settings): Promise<Settings> {
@@ -239,13 +293,19 @@ export async function update(patch: Settings): Promise<Settings> {
     if (!spec || valid === undefined) throw new Error(`invalid setting: ${key}`)
     accepted[key] = valid
   }
-  cache = { ...cache, ...accepted }
-  await persist()
-  return cache
+  return withSettingsLock(() => {
+    // Another location may have changed the shared snapshot since this module
+    // hydrated. Merge the patch into the latest disk state, not stale memory.
+    cache = { ...readSnapshot(), ...accepted }
+    persist(cache)
+    return cache
+  })
 }
 
 export async function reset(): Promise<Settings> {
-  cache = { ...DEFAULTS }
-  await persist()
-  return cache
+  return withSettingsLock(() => {
+    cache = { ...DEFAULTS }
+    persist(cache)
+    return cache
+  })
 }

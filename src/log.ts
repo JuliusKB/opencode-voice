@@ -8,7 +8,7 @@
  * timings, VAD segmentation, chunk decodes. NEVER speech content — no
  * transcript text, no form text, under any level.
  */
-import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs"
+import { appendFileSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs"
 import { bool, dataDir } from "./settings"
 
 const MAX_LINES = 500

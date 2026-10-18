@@ -7,7 +7,7 @@ again extends the draft. If anything goes wrong, **`ctrl+f9`** brings your
 last take back (see [Recovery](#recovery-ctrlf9)).
 
 > **Status:** early release (0.x). Linux only, tested mainly with PipeWire.
-> Expect rough edges; see [Known issues](#known-issues-and-to-do).
+> Expect rough edges; see [Current limitations](#current-limitations-and-planned-work).
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/JuliusKB/opencode-voice/main/pics/state_ready.png" alt="Voice panel in the sidebar: ready, model loaded" width="378">
