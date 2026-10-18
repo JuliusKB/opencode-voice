@@ -1,10 +1,12 @@
 import { describe, expect, test } from "bun:test"
-import { mkdtempSync } from "node:fs"
+import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { buildTui } from "../scripts/build-tui"
 import { remove } from "../src/catalog"
 import { formDelivery, type Client } from "../src/delivery"
 import { update } from "../src/settings"
+import { check as checkUpdates, claimAnnouncement, newer } from "../src/updates"
+import { VERSION } from "../src/version"
 
 describe("release safety guards", () => {
   test("rejects model paths outside the model directory", () => {
@@ -94,5 +96,40 @@ describe("release safety guards", () => {
     await delivery.push("session-1", "recovered old draft") // recovery of a saved draft
 
     expect(saves).toEqual(["take-token", undefined, undefined])
+  })
+
+  test("compares stable release versions without treating malformed input as an update", () => {
+    expect(newer("0.0.7", "0.0.6")).toBeTrue()
+    expect(newer("0.0.6", "0.0.6")).toBeFalse()
+    expect(newer("0.0.5", "0.0.6")).toBeFalse()
+    expect(newer("0.0.7-beta.1", "0.0.6")).toBeFalse()
+  })
+
+  test("caches bounded update metadata and announces a release only once", async () => {
+    const root = mkdtempSync(`${tmpdir()}/voice-update-`)
+    const oldData = process.env.XDG_DATA_HOME
+    const oldFetch = globalThis.fetch
+    process.env.XDG_DATA_HOME = root
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({
+        version: "999.0.0",
+        opencodeVoice: { releases: { "999.0.0": ["New feature\nwith detail", 42] } },
+      }), { status: 200 })) as unknown as typeof fetch
+    try {
+      const info = await checkUpdates(true)
+      expect(info).toEqual({
+        installed: VERSION,
+        latest: "999.0.0",
+        available: true,
+        releases: [{ version: "999.0.0", notes: ["New feature with detail"] }],
+      })
+      expect(await claimAnnouncement("999.0.0")).toBeTrue()
+      expect(await claimAnnouncement("999.0.0")).toBeFalse()
+    } finally {
+      globalThis.fetch = oldFetch
+      if (oldData === undefined) delete process.env.XDG_DATA_HOME
+      else process.env.XDG_DATA_HOME = oldData
+      rmSync(root, { recursive: true, force: true })
+    }
   })
 })

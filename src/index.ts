@@ -14,6 +14,7 @@ type WorkerMsg =
   | { type: "log"; line: string }
 import * as settings from "./settings"
 import * as catalog from "./catalog"
+import * as updates from "./updates"
 import { debug, dump, init as initLog, log } from "./log"
 
 // Whole opencode-server usage, by user decision: honest (no fake
@@ -362,12 +363,26 @@ export default Plugin.define({
         // engine-shaping settings only take effect on a fresh recognizer
         if (Object.keys(patch).some((k) => ["model", "language", "threads", "vadThreshold", "vadMinSilenceSec", "vadMinSpeechSec", "vadMaxSpeechSec", "vadEnabled"].includes(k)))
           reloadEngineWhenSafe()
+        if ("updateCheck" in patch && String((patch as Record<string, unknown>).updateCheck) === "false") await updates.clear()
         return { json: JSON.stringify(next) }
       },
       settingsReset: async () => {
         const next = await settings.reset()
         reloadEngineWhenSafe()
         return { json: JSON.stringify(next) }
+      },
+      updateStatus: async () => ({ json: JSON.stringify(updates.status()) }),
+      updateRefresh: async (input) => {
+        const force = Boolean((input as { force?: boolean }).force)
+        return { json: JSON.stringify(await updates.check(settings.bool("updateCheck") || force, force)) }
+      },
+      updateClaim: async (input) => ({
+        announce: await updates.claimAnnouncement((input as { version: string }).version),
+      }),
+      updateSettle: async (input) => {
+        const value = input as { version: string; acknowledged: boolean }
+        await updates.settleAnnouncement(value.version, value.acknowledged)
+        return {}
       },
       level: async () => ({ level: capture.level(), recording: capture.isRecording() }),
       recordCancel: async () => {
@@ -415,6 +430,13 @@ export default Plugin.define({
         return { kind: "none", text: "", wav: "" }
       },
     })
+
+    // Optional metadata-only check. It is cached globally on disk, never
+    // blocks startup, and can only inform the user — installation stays manual.
+    void updates
+      .check(settings.bool("updateCheck"))
+      .then((info) => registration.events.emit("update", { json: JSON.stringify(info) }))
+      .catch(() => {})
 
     return async () => {
       clearInterval(residencyTick)

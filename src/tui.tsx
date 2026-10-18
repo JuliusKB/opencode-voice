@@ -6,6 +6,7 @@ import { Plugin, usePlugin } from "@opencode/plugin/tui"
 import { Voice } from "./rpc"
 import { formDelivery, type Client } from "./delivery"
 import { ADVANCED_GROUPS, DEFAULTS, SPECS, type Settings } from "./settings"
+import { RELEASES, VERSION } from "./version"
 
 /** Toast policy: the panel and the form are the real feedback. */
 function notify(
@@ -73,6 +74,13 @@ const model = () => sStr("model")
 const recordKey = () => sStr("recordKey")
 const settingsKey = () => sStr("settingsKey")
 const restoreKey = () => sStr("restoreKey").trim()
+type UpdateInfo = {
+  installed: string
+  latest: string
+  available: boolean
+  releases: Array<{ version: string; notes: string[] }>
+}
+const [availableUpdate, setAvailableUpdate] = createSignal<UpdateInfo | null>(null)
 // true while the error state is a failed TRANSCRIPTION whose audio the
 // safety net kept (capture failures have nothing to retry)
 const [retryable, setRetryable] = createSignal(false)
@@ -178,11 +186,65 @@ type VoiceMethods = {
   recordStop(input: Record<string, never>): Promise<{ wav: string; seconds: number }>
   engineUnload(input: Record<string, never>): Promise<{ unloaded: boolean }>
   recoverPeek(input: Record<string, never>): Promise<{ kind: "draft" | "audio" | "both" | "none"; text: string; wav: string }>
+  updateStatus(input: Record<string, never>): Promise<JsonResult>
+  updateRefresh(input: { force?: boolean }): Promise<JsonResult>
+  updateClaim(input: { version: string }): Promise<{ announce: boolean }>
+  updateSettle(input: { version: string; acknowledged: boolean }): Promise<Record<string, never>>
 }
 
 function voiceRpc(context: Ctx) {
   const raw = context.client.rpc(Voice)
   return raw as Omit<typeof raw, keyof VoiceMethods> & VoiceMethods
+}
+
+function updateMessage(info: UpdateInfo): string {
+  const notes = info.releases.length
+    ? info.releases.map((release) => `v${release.version}\n${release.notes.map((line) => `• ${line}`).join("\n")}`).join("\n\n")
+    : "A newer release is available. See the project release notes for details."
+  return `OpenCode Voice v${info.latest} is available.\n\n${notes}\n\nNothing was installed or changed.`
+}
+
+function rememberUpdate(info: UpdateInfo, allowDisabled = false): void {
+  setAvailableUpdate(info.available && (allowDisabled || String(cfg().updateCheck) !== "false") ? info : null)
+}
+
+async function releaseNotesMenu(context: Ctx): Promise<void> {
+  const all = new Map(Object.entries(RELEASES))
+  for (const release of availableUpdate()?.releases ?? []) all.set(release.version, release.notes)
+  const entries = [...all.entries()].sort(([a], [b]) => {
+    const av = a.split(".").map(Number)
+    const bv = b.split(".").map(Number)
+    return (bv[0] - av[0]) || (bv[1] - av[1]) || (bv[2] - av[2])
+  })
+  const choice = await context.ui.dialog.select({
+    title: "OpenCode Voice release notes",
+    options: entries.map(([version, notes]) => ({
+      title: `v${version}`,
+      value: version,
+      description: notes.join(" · "),
+    })),
+  })
+  if (!choice) return
+  const notes = all.get(choice) ?? []
+  await context.ui.dialog.alert({
+    title: `OpenCode Voice v${choice}`,
+    message: notes.map((line) => `• ${line}`).join("\n") || "No release notes recorded.",
+  })
+}
+
+async function showAvailableUpdate(context: Ctx, info: UpdateInfo, claim: boolean, allowDisabled = false): Promise<void> {
+  rememberUpdate(info, allowDisabled)
+  if (!info.available || (!allowDisabled && String(cfg().updateCheck) === "false")) return
+  if (claim) {
+    const result = await voiceRpc(context).updateClaim({ version: info.latest }).catch(() => ({ announce: false }))
+    if (!result.announce) return
+  }
+  const acknowledged = await context.ui.dialog.confirm({
+    title: "Voice update available",
+    message: `${updateMessage(info)}\n\nUpdate with OpenCode's plugin updater when you choose.`,
+    label: { confirm: "Got it", cancel: "Remind me later" },
+  })
+  await voiceRpc(context).updateSettle({ version: info.latest, acknowledged: Boolean(acknowledged) }).catch(() => {})
 }
 
 const LANGUAGES: Array<[string, string]> = [
@@ -197,6 +259,11 @@ const LANGUAGES: Array<[string, string]> = [
 async function save(context: Ctx, patch: Settings) {
   const r = await voiceRpc(context).settingsSet({ json: JSON.stringify(patch) })
   setCfg(JSON.parse(r.json) as Settings)
+  if (patch.updateCheck === false || patch.updateCheck === "false") setAvailableUpdate(null)
+  if (patch.updateCheck === true || patch.updateCheck === "true") {
+    const info = JSON.parse((await voiceRpc(context).updateRefresh({ force: true })).json) as UpdateInfo
+    await showAvailableUpdate(context, info, true)
+  }
   setCfgVersion((v) => v + 1)
 }
 
@@ -534,6 +601,11 @@ async function settingsMenuLoop(context: Ctx) {
             .join(" "),
         } as { title: string; value: string; category: string },
         { title: "Show log", value: "@log", category: "More" },
+        { title: "Check for updates now", value: "@check", category: "More" },
+        ...(availableUpdate()
+          ? [{ title: `Update available: v${availableUpdate()!.latest}`, value: "@update", category: "More" }]
+          : []),
+        { title: "Browse release notes…", value: "@whatsnew", category: "More" },
         {
           title: stats().engineLoaded ? "Unload model from memory now" : "Unload model from memory (not loaded)",
           value: "@unload",
@@ -563,6 +635,22 @@ async function settingsMenuLoop(context: Ctx) {
       context.ui.router.navigate({ type: "plugin", name: "voice-log" })
       return
     }
+    if (choice === "@update") {
+      const info = availableUpdate()
+      if (info) await showAvailableUpdate(context, info, false)
+      continue
+    }
+    if (choice === "@check") {
+      const info = JSON.parse((await voiceRpc(context).updateRefresh({ force: true })).json) as UpdateInfo
+      rememberUpdate(info, true)
+      if (info.available) await showAvailableUpdate(context, info, true, true)
+      else context.ui.toast.show({ title: "OpenCode Voice", message: `up to date — v${VERSION}`, duration: 5000 })
+      continue
+    }
+    if (choice === "@whatsnew") {
+      await releaseNotesMenu(context)
+      continue
+    }
     if (choice === "@reset") {
       const ok = await context.ui.dialog.confirm({
         title: "Reset settings",
@@ -572,6 +660,8 @@ async function settingsMenuLoop(context: Ctx) {
       if (ok) {
         const r = await voiceRpc(context).settingsReset({})
         setCfg(JSON.parse(r.json) as Settings)
+        const info = JSON.parse((await voiceRpc(context).updateRefresh({})).json) as UpdateInfo
+        await showAvailableUpdate(context, info, true)
       }
       continue
     }
@@ -744,10 +834,11 @@ function VoicePanel() {
   const TUNE = 4
   const title = () => {
     const key = settingsKey()
-    const fixed = "Voice".length + `Menu:${key}`.length
+    const voice = `Voice v${VERSION}${availableUpdate() ? "↑" : ""}`
+    const fixed = voice.length + `Menu:${key}`.length
     const w = panelW()
-    if (w <= fixed + TUNE + 2) return `Voice──────Menu:${key}` // unmeasured/narrow: static fallback
-    return `Voice${"─".repeat(w - fixed - TUNE)}Menu:${key}`
+    if (w <= fixed + TUNE + 2) return `${voice}──Menu:${key}` // unmeasured/narrow: static fallback
+    return `${voice}${"─".repeat(w - fixed - TUNE)}Menu:${key}`
   }
 
   return (
@@ -958,9 +1049,38 @@ export default Plugin.define({
       ],
     }})
 
+    let settingsHydrated = false
+    let pendingUpdate: UpdateInfo | null = null
+    const acceptUpdate = (info: UpdateInfo) => {
+      if (!settingsHydrated) {
+        pendingUpdate = info
+        return
+      }
+      // A late network result must not replace a dialog the user already
+      // opened. It updates the panel/menu now; the one-time modal is claimed
+      // from cached state during startup (or opened manually from the menu).
+      rememberUpdate(info)
+    }
+    const offUpdate = voiceRpc(context).events.on("update", (event) => {
+      const data = event.data as { json: string }
+      try {
+        acceptUpdate(JSON.parse(data.json) as UpdateInfo)
+      } catch {
+        // malformed optional metadata is ignored
+      }
+    })
+    onCleanupTui.push(offUpdate)
+
     voiceRpc(context)
       .settingsGet({})
-      .then((r) => setCfg(JSON.parse(r.json) as Settings))
+      .then(async (r) => {
+        setCfg(JSON.parse(r.json) as Settings)
+        settingsHydrated = true
+        if (pendingUpdate) rememberUpdate(pendingUpdate)
+        pendingUpdate = null
+        const current = JSON.parse((await voiceRpc(context).updateRefresh({})).json) as UpdateInfo
+        await showAvailableUpdate(context, current, true)
+      })
       .catch(() => {})
 
     slogRpc = (line, dbg) => void voiceRpc(context).clientLog({ line, debug: dbg }).catch(() => {})

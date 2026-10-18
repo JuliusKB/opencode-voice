@@ -23,24 +23,29 @@ computer.** Whisper runs locally, in-process, via
 speech APIs, no accounts, no API keys, no telemetry, and no server of mine or
 anyone else's involved in transcription.
 
-The plugin talks to the network in exactly two cases, both of them to
-GitHub, and neither of them carries audio or text:
+The plugin talks to the network in three cases, and none of them carries audio
+or transcript text:
 
 - opening the model manager fetches the list of available whisper models
   from k2-fsa's release page
 - confirming a download fetches that model file
+- once per day, unless disabled under Behavior, it fetches this package's
+  public npm metadata to check for a newer version; it only informs you and
+  never installs an update
 
-After a model is installed the plugin works fully offline, on air-gapped
-machines and on confidential codebases. See [Data & privacy](#data--privacy)
-for exactly what is stored on disk.
+After a model is installed the plugin works fully offline (disable the optional
+update check to make no automatic request), on air-gapped machines and on
+confidential codebases. See [Data & privacy](#data--privacy) for exactly what
+is stored on disk.
 
 A remote transcription backend may be added in a future version. If it is,
 it will be opt-in and off by default. Local stays the default.
 
 ## Features
 
-- **Local and offline** — transcription is local compute; the only network
-  use is downloading models from GitHub on your explicit request
+- **Local and offline transcription** — speech processing never uses the
+  network; model downloads are explicit and the metadata-only update check is
+  optional
 - **Push-to-talk** (F9 by default) with a live level meter in the sidebar panel
 - **Proofread-before-send**: transcripts arrive as a prefilled form — edit,
   submit, or discard; a new take extends the open draft
@@ -54,7 +59,27 @@ it will be opt-in and off by default. Local stays the default.
   a failure or crash
 - **Settings-first design**: shortcuts, language, VAD tuning, model RAM
   residency, and meter style all live in one menu (`ctrl+alt+v`)
+- **Update awareness**: the panel shows the installed version and marks an
+  available release; each new release is announced once, never auto-installed
 - **Multi-terminal safe**: transcripts land only in the terminal that recorded them
+
+### Update notifications
+
+Version `0.0.7` is dedicated to update awareness and release notes. The panel
+shows the installed Voice version, and the plugin can announce newer published
+versions with their complete release notes. It never installs updates; use
+OpenCode's normal plugin updater when you choose, for example:
+
+```sh
+opencode plugin update @juliuskb/opencode-voice
+```
+
+Automatic checks happen at launch at most once per day. **Check for updates**
+can be disabled under Behavior; this stops automatic checks, indicators, and
+release notifications. A manual **Check for updates now** action remains
+available. Re-enabling automatic checks clears the cached update state and
+starts fresh. Failed offline checks may retry on a later launch after the
+backoff period.
 
 ## Requirements
 
@@ -212,6 +237,8 @@ Everything lives in `~/.local/share/opencode-voice/`:
 
 - `models/` — downloaded whisper models (from k2-fsa's GitHub releases)
 - `settings.json` — your settings
+- `updates.json` — cached public version metadata and the last release notice
+  shown (never audio, transcripts, or machine identifiers)
 - `voice.log` (+ `.prev`) — plugin log, current and previous run. **Never
   contains speech content or transcripts** at any log level.
 - `last-take.wav` / `last-draft.txt` — the **safety net** (on by default,
@@ -229,6 +256,8 @@ temporary WAV and is deleted after transcription.
 Opening the model manager checks k2-fsa's GitHub release catalog; model files
 are downloaded from GitHub only after your explicit confirmation. Audio and
 transcripts are never sent with those requests.
+The optional daily update check requests only this package's public metadata
+from npm. Disable **Check for updates** under Behavior to make no such request.
 **Deleting the directory above is a complete uninstall of all plugin data.**
 
 ## Troubleshooting

@@ -221,6 +221,55 @@ export const Voice = Rpc.define({
       },
       errors: {},
     },
+    updateStatus: {
+      input: { type: "object", additionalProperties: false },
+      output: {
+        type: "object",
+        properties: { json: { type: "string" } },
+        required: ["json"],
+        additionalProperties: false,
+      },
+      errors: {},
+    },
+    updateRefresh: {
+      input: {
+        type: "object",
+        properties: { force: { type: "boolean" } },
+        additionalProperties: false,
+      },
+      output: {
+        type: "object",
+        properties: { json: { type: "string" } },
+        required: ["json"],
+        additionalProperties: false,
+      },
+      errors: {},
+    },
+    updateClaim: {
+      input: {
+        type: "object",
+        properties: { version: { type: "string" } },
+        required: ["version"],
+        additionalProperties: false,
+      },
+      output: {
+        type: "object",
+        properties: { announce: { type: "boolean" } },
+        required: ["announce"],
+        additionalProperties: false,
+      },
+      errors: {},
+    },
+    updateSettle: {
+      input: {
+        type: "object",
+        properties: { version: { type: "string" }, acknowledged: { type: "boolean" } },
+        required: ["version", "acknowledged"],
+        additionalProperties: false,
+      },
+      output: { type: "object", additionalProperties: false },
+      errors: {},
+    },
     level: {
       input: { type: "object", additionalProperties: false },
       output: {
@@ -323,6 +372,14 @@ export const Voice = Rpc.define({
           totalSec: { type: "number" },
         },
         required: ["client", "processedSec", "totalSec"],
+        additionalProperties: false,
+      },
+    },
+    update: {
+      schema: {
+        type: "object",
+        properties: { json: { type: "string" } },
+        required: ["json"],
         additionalProperties: false,
       },
     },

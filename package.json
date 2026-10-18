@@ -1,7 +1,39 @@
 {
   "name": "@juliuskb/opencode-voice",
-  "version": "0.0.6",
+  "version": "0.0.7",
   "description": "Local-first voice dictation for OpenCode with push-to-talk Whisper transcription",
+  "opencodeVoice": {
+    "releases": {
+      "0.0.1": [
+        "First public release of local push-to-talk dictation for OpenCode.",
+        "Added local Whisper transcription, model management, editable draft forms, settings, and recovery."
+      ],
+      "0.0.2": [
+        "Fixed the TUI failing to load from a clean npm installation because the host selected the React JSX runtime."
+      ],
+      "0.0.3": [
+        "Fixed the installed-package panel rendering only its initial state by shipping a precompiled reactive panel.",
+        "Added recorder cleanup/watchdogs and blocked transcription when the configured model is missing.",
+        "Aligned plugin identifiers with the published package name."
+      ],
+      "0.0.4": [
+        "Added measured performance guidance and an Unload model from memory action."
+      ],
+      "0.0.5": [
+        "Fixed model unload leaking native workers and memory under OpenCode's bundled Bun 1.4.2."
+      ],
+      "0.0.6": [
+        "Fixed the VAD reset crash between independent takes.",
+        "Added a scrollable viewer for current and previous logs.",
+        "Model unload now closes settings and reloads cleanly on the next take."
+      ],
+      "0.0.7": [
+        "Shows the installed OpenCode Voice version in the panel.",
+        "Checks daily for newer releases and announces each available version once.",
+        "Adds update availability and complete release notes without installing anything."
+      ]
+    }
+  },
   "type": "module",
   "scripts": {
     "check": "tsc -p tsconfig.json",

@@ -64,6 +64,14 @@ export const SPECS: SettingSpec[] = [
     hint: "toast noise; the panel and the form are the real feedback",
   },
   {
+    key: "updateCheck",
+    label: "Check for updates",
+    kind: "boolean",
+    group: "Behavior",
+    recommended: true,
+    hint: "daily npm metadata check; only informs, never installs",
+  },
+  {
     key: "safetyNet",
     label: "Safety net",
     kind: "boolean",
