@@ -222,8 +222,8 @@ means there was nothing on disk. The key is configurable under Shortcuts.
 - **Transcription** — model (opens the model manager), language (for
   multilingual models; auto-detect by default)
 - **Audio** — input device, capture tool (with per-machine availability)
-- **Behavior** — model RAM residency, notification verbosity,
-  queue-vs-steer delivery
+- **Behavior** — model RAM residency, notification verbosity, the daily
+  update check (on/off), the safety net, queue-vs-steer delivery
 - **Shortcuts** — all key bindings
 
 **Advanced…** holds the tuned-by-default knobs: decode chunking, VAD

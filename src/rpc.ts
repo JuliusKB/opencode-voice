@@ -2,7 +2,8 @@ import { Rpc } from "@opencode/plugin/rpc"
 
 /**
  * Contract between the halves (and any external client).
- * Transcription, capture, model management, settings, logging, and recovery.
+ * Transcription, capture, model management, settings, update checks,
+ * logging, and recovery.
  */
 export const Voice = Rpc.define({
   id: "voice",

@@ -11,6 +11,8 @@
  *
  * Output: dist/tui.js, importing only solid-js, @opentui/solid and the plugin
  * SDK by bare name; the host maps those to its own instances at load time.
+ * package.json is inlined into the bundle (version and release notes), so the
+ * panel's version is the one it was built with.
  */
 import { createSolidTransformPlugin } from "@opentui/solid/bun-plugin"
 

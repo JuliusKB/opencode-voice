@@ -1,7 +1,14 @@
-import { mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs"
+/**
+ * Update awareness: reads this package's public npm `/latest` metadata at most
+ * daily, caches it in updates.json, and owns the one-at-a-time announcement
+ * lease so several terminals show a new release exactly once. Never installs
+ * anything. Sends nothing but the request itself.
+ */
+import { readFileSync } from "node:fs"
 import { randomUUID } from "node:crypto"
 import { dataDir } from "./settings"
-import { VERSION } from "./version"
+import { withDirLock, writeAtomic } from "./fsutil"
+import { VERSION, cleanReleases, compareVersions, newer, parts } from "./version"
 
 const PACKAGE = "@juliuskb/opencode-voice"
 const REGISTRY = `https://registry.npmjs.org/${encodeURIComponent(PACKAGE)}/latest`
@@ -35,30 +42,11 @@ type UpdateState = {
 
 const stateFile = () => `${dataDir()}/updates.json`
 const lockDir = () => `${dataDir()}/updates.lock`
-let inFlight: Promise<UpdateInfo> | null = null
+// one request at a time per server; a forced (manual) check must not be
+// answered by an automatic one that may settle for the cached result
+let inFlight: { task: Promise<UpdateInfo>; forced: boolean } | null = null
 
-async function withLock<T>(fn: () => T | Promise<T>): Promise<T> {
-  mkdirSync(dataDir(), { recursive: true })
-  for (let attempt = 0; ; attempt++) {
-    try {
-      mkdirSync(lockDir())
-      break
-    } catch {
-      try {
-        if (Date.now() - statSync(lockDir()).mtimeMs > 15_000) rmSync(lockDir(), { recursive: true, force: true })
-      } catch {
-        // lock disappeared between checks
-      }
-      if (attempt >= 100) throw new Error("update state is locked")
-      await Bun.sleep(20)
-    }
-  }
-  try {
-    return await fn()
-  } finally {
-    rmSync(lockDir(), { recursive: true, force: true })
-  }
-}
+const withLock = <T>(fn: () => T | Promise<T>) => withDirLock(lockDir(), "update state", fn)
 
 function readState(): UpdateState {
   try {
@@ -70,46 +58,10 @@ function readState(): UpdateState {
 }
 
 function writeState(state: UpdateState): void {
-  mkdirSync(dataDir(), { recursive: true })
-  const tmp = `${stateFile()}.tmp-${randomUUID()}`
-  writeFileSync(tmp, `${JSON.stringify(state, null, 2)}\n`)
-  renameSync(tmp, stateFile())
+  writeAtomic(stateFile(), `${JSON.stringify(state, null, 2)}\n`)
 }
 
-function parts(version: string): [number, number, number] | null {
-  const match = version.match(/^(\d+)\.(\d+)\.(\d+)$/)
-  return match ? [Number(match[1]), Number(match[2]), Number(match[3])] : null
-}
-
-export function newer(candidate: string, installed = VERSION): boolean {
-  const a = parts(candidate)
-  const b = parts(installed)
-  if (!a || !b) return false
-  for (let i = 0; i < 3; i++) {
-    if (a[i] !== b[i]) return a[i] > b[i]
-  }
-  return false
-}
-
-function cleanNotes(value: unknown): string[] {
-  if (!Array.isArray(value)) return []
-  return value
-    .filter((item): item is string => typeof item === "string")
-    .map((item) => item.replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/\s{2,}/g, " ").trim())
-    .filter(Boolean)
-}
-
-function cleanReleases(value: unknown): Record<string, string[]> {
-  if (!value || typeof value !== "object") return {}
-  return Object.fromEntries(
-    Object.entries(value as Record<string, unknown>)
-      .filter(([version]) => parts(version) !== null)
-      .map(([version, notes]) => [version, cleanNotes(notes)])
-      .filter(([, notes]) => notes.length > 0)
-  )
-}
-
-export function status(outcome: UpdateOutcome = "cached", enabled = true): UpdateInfo {
+export function status(outcome: UpdateOutcome, enabled: boolean): UpdateInfo {
   const state = readState()
   const latest = typeof state.latest === "string" ? state.latest : ""
   return {
@@ -118,7 +70,7 @@ export function status(outcome: UpdateOutcome = "cached", enabled = true): Updat
     available: newer(latest),
     releases: Object.entries(cleanReleases(state.releases))
       .filter(([version]) => newer(version) && !newer(version, latest))
-      .sort(([a], [b]) => newer(a, b) ? -1 : newer(b, a) ? 1 : 0)
+      .sort(([a], [b]) => compareVersions(b, a))
       .map(([version, notes]) => ({ version, notes })),
     enabled,
     outcome,
@@ -204,7 +156,7 @@ export async function clear(): Promise<void> {
 
 export function check(enabled: boolean, force = false): Promise<UpdateInfo> {
   if (!enabled && !force) return Promise.resolve(status("disabled", false))
-  if (inFlight) return inFlight
+  if (inFlight && (inFlight.forced || !force)) return inFlight.task
   const task = (async () => {
     const now = Date.now()
     const epoch = await withLock(() => {
@@ -232,22 +184,26 @@ export function check(enabled: boolean, force = false): Promise<UpdateInfo> {
       await withLock(() => {
         const state = readState()
         if ((state.epoch ?? 0) !== epoch) return
-        writeState({
+        const next: UpdateState = {
           ...state,
           checkedAt: Date.now(),
           latest: body.version as string,
           releases: cleanReleases(body.opencodeVoice?.releases),
-        })
+        }
+        delete next.attemptedAt // the failure backoff applies only after a failure
+        writeState(next)
       })
     } catch {
-      // Updates are optional: offline startup and registry failures stay silent.
+      // Updates are optional. The failure is reported through `outcome`:
+      // automatic callers stay silent, a manual check tells the user.
       return status("failed", enabled)
     }
     return status("checked", enabled)
   })()
-  inFlight = task
+  const entry = { task, forced: force }
+  inFlight = entry
   const clearInFlight = () => {
-    if (inFlight === task) inFlight = null
+    if (inFlight === entry) inFlight = null
   }
   void task.then(clearInFlight, clearInFlight)
   return task

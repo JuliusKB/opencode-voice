@@ -6,7 +6,8 @@ import { Plugin, usePlugin } from "@opencode/plugin/tui"
 import { Voice } from "./rpc"
 import { formDelivery, type Client } from "./delivery"
 import { ADVANCED_GROUPS, DEFAULTS, SPECS, type Settings } from "./settings"
-import { RELEASES, VERSION } from "./version"
+import { RELEASES, VERSION, compareVersions } from "./version"
+import type { UpdateInfo } from "./updates" // type-only: nothing of the server module reaches the panel bundle
 
 /** Toast policy: the panel and the form are the real feedback. */
 function notify(
@@ -74,15 +75,10 @@ const model = () => sStr("model")
 const recordKey = () => sStr("recordKey")
 const settingsKey = () => sStr("settingsKey")
 const restoreKey = () => sStr("restoreKey").trim()
-type UpdateInfo = {
-  installed: string
-  latest: string
-  available: boolean
-  releases: Array<{ version: string; notes: string[] }>
-  enabled: boolean
-  outcome: "checked" | "cached" | "disabled" | "failed"
-}
 const [availableUpdate, setAvailableUpdate] = createSignal<UpdateInfo | null>(null)
+// lease-renewal timers of announcement dialogs still open; cleared on TUI
+// dispose so a hot reload cannot keep a lease alive that nobody will settle
+const updateTimers = new Set<ReturnType<typeof setInterval>>()
 // true while the error state is a failed TRANSCRIPTION whose audio the
 // safety net kept (capture failures have nothing to retry)
 const [retryable, setRetryable] = createSignal(false)
@@ -205,21 +201,41 @@ function updateMessage(info: UpdateInfo): string {
   const notes = info.releases.length
     ? info.releases.map((release) => `v${release.version}\n${release.notes.map((line) => `• ${line}`).join("\n")}`).join("\n\n")
     : "A newer release is available. See the project release notes for details."
-  return `OpenCode Voice v${info.latest} is available.\n\n${notes}\n\nNothing was installed or changed.`
+  return `OpenCode Voice v${info.latest} is available.\n\n${notes}\n\nNothing was installed or changed.\n\nUpdate with OpenCode's plugin updater when you choose.`
 }
 
 function rememberUpdate(info: UpdateInfo): void {
   setAvailableUpdate(info.available && info.enabled ? info : null)
 }
 
+/**
+ * The one place that asks the server for a refresh. A failed check is a
+ * result, never a thrown error that would kill an open menu; only a forced
+ * (user-initiated) check toasts the failure. Returns null when the RPC itself
+ * failed (server half unreachable).
+ */
+async function refreshUpdates(context: Ctx, force: boolean): Promise<UpdateInfo | null> {
+  let info: UpdateInfo
+  try {
+    info = JSON.parse((await voiceRpc(context).updateRefresh({ force })).json) as UpdateInfo
+  } catch (err) {
+    slog(`update check FAILED: ${errLog(err)}`)
+    if (force) toastCheckFailed(context)
+    return null
+  }
+  rememberUpdate(info)
+  if (info.outcome === "failed" && force) toastCheckFailed(context)
+  return info
+}
+
+function toastCheckFailed(context: Ctx): void {
+  context.ui.toast.show({ title: "OpenCode Voice", message: "Could not check for updates. Check your connection and try again.", variant: "error", duration: 7000 })
+}
+
 async function releaseNotesMenu(context: Ctx): Promise<void> {
   const all = new Map(Object.entries(RELEASES))
   for (const release of availableUpdate()?.releases ?? []) all.set(release.version, release.notes)
-  const entries = [...all.entries()].sort(([a], [b]) => {
-    const av = a.split(".").map(Number)
-    const bv = b.split(".").map(Number)
-    return (bv[0] - av[0]) || (bv[1] - av[1]) || (bv[2] - av[2])
-  })
+  const entries = [...all.entries()].sort(([a], [b]) => compareVersions(b, a))
   const choice = await context.ui.dialog.select({
     title: "OpenCode Voice release notes",
     options: entries.map(([version, notes]) => ({
@@ -244,15 +260,17 @@ async function showAutomaticUpdate(context: Ctx, info: UpdateInfo): Promise<void
   const renew = setInterval(() => {
     void voiceRpc(context).updateRenew({ version: info.latest, token }).catch(() => ({ renewed: false }))
   }, 10_000)
+  updateTimers.add(renew)
   let acknowledged = false
   try {
     acknowledged = Boolean(await context.ui.dialog.confirm({
       title: "Voice update available",
-      message: `${updateMessage(info)}\n\nUpdate with OpenCode's plugin updater when you choose.`,
+      message: updateMessage(info),
       label: { confirm: "Got it", cancel: "Remind me later" },
     }))
   } finally {
     clearInterval(renew)
+    updateTimers.delete(renew)
     await voiceRpc(context).updateSettle({ version: info.latest, token, acknowledged }).catch(() => ({ settled: false }))
   }
 }
@@ -260,7 +278,7 @@ async function showAutomaticUpdate(context: Ctx, info: UpdateInfo): Promise<void
 async function showManualUpdate(context: Ctx, info: UpdateInfo): Promise<void> {
   await context.ui.dialog.alert({
     title: "Voice update available",
-    message: `${updateMessage(info)}\n\nUpdate with OpenCode's plugin updater when you choose.`,
+    message: updateMessage(info),
   })
   await voiceRpc(context).updateAcknowledge({ version: info.latest }).catch(() => {})
 }
@@ -275,14 +293,15 @@ const LANGUAGES: Array<[string, string]> = [
 
 /** Push a patch to the server (source of truth) and refresh the local copy. */
 async function save(context: Ctx, patch: Settings) {
+  const updatesWereOn = cfg().updateCheck === true
   const r = await voiceRpc(context).settingsSet({ json: JSON.stringify(patch) })
   setCfg(JSON.parse(r.json) as Settings)
-  if (patch.updateCheck === false || patch.updateCheck === "false") setAvailableUpdate(null)
-  if (patch.updateCheck === true || patch.updateCheck === "true") {
-    const info = JSON.parse((await voiceRpc(context).updateRefresh({ force: true })).json) as UpdateInfo
-    if (info.outcome === "failed")
-      context.ui.toast.show({ title: "OpenCode Voice", message: "Could not check for updates. Check your connection and try again.", variant: "error", duration: 7000 })
-    else await showAutomaticUpdate(context, info)
+  // the boolean editor always sends a real boolean
+  if (patch.updateCheck === false) setAvailableUpdate(null)
+  if (patch.updateCheck === true && !updatesWereOn) {
+    // consent just given: check now and announce from the fresh state
+    const info = await refreshUpdates(context, true)
+    if (info) await showAutomaticUpdate(context, info)
   }
   setCfgVersion((v) => v + 1)
 }
@@ -662,12 +681,10 @@ async function settingsMenuLoop(context: Ctx) {
     }
     if (choice === "@check") {
       context.ui.toast.show({ title: "OpenCode Voice", message: "Checking for updates…", duration: 5000 })
-      const info = JSON.parse((await voiceRpc(context).updateRefresh({ force: true })).json) as UpdateInfo
-      rememberUpdate(info)
-      if (info.outcome === "failed")
-        context.ui.toast.show({ title: "OpenCode Voice", message: "Could not check for updates. Check your connection and try again.", variant: "error", duration: 7000 })
-      else if (info.available) await showManualUpdate(context, info)
-      else context.ui.toast.show({ title: "OpenCode Voice", message: `up to date — v${VERSION}`, duration: 5000 })
+      const info = await refreshUpdates(context, true) // failure already toasted
+      if (info?.outcome === "checked" && info.available) await showManualUpdate(context, info)
+      else if (info?.outcome === "checked")
+        context.ui.toast.show({ title: "OpenCode Voice", message: `up to date — v${VERSION}`, duration: 5000 })
       return
     }
     if (choice === "@whatsnew") {
@@ -683,8 +700,9 @@ async function settingsMenuLoop(context: Ctx) {
       if (ok) {
         const r = await voiceRpc(context).settingsReset({})
         setCfg(JSON.parse(r.json) as Settings)
-        const info = JSON.parse((await voiceRpc(context).updateRefresh({})).json) as UpdateInfo
-        await showAutomaticUpdate(context, info)
+        // reset restores consent and wipes update state: check now, like enabling does
+        const info = await refreshUpdates(context, true)
+        if (info) await showAutomaticUpdate(context, info)
       }
       continue
     }
@@ -1082,8 +1100,7 @@ export default Plugin.define({
         await showAutomaticUpdate(context, cached)
         // Fresh discoveries update the panel now and are announced from cache
         // on the next startup. This remains pull-only; there is no event path.
-        const current = JSON.parse((await voiceRpc(context).updateRefresh({})).json) as UpdateInfo
-        rememberUpdate(current)
+        await refreshUpdates(context, false)
       })
       .catch(() => {})
 
@@ -1237,6 +1254,8 @@ export default Plugin.define({
 
     return () => {
       for (const off of onCleanupTui) off()
+      for (const timer of updateTimers) clearInterval(timer)
+      updateTimers.clear()
       disposeRoute()
       disposeSlot()
     }

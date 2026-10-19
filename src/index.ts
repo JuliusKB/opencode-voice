@@ -351,6 +351,7 @@ export default Plugin.define({
         const { json } = input as { json: string }
         const patch = JSON.parse(json) as settings.Settings
         log(`settings: ${Object.entries(patch).map(([k, v]) => `${k}=${v}`).join(", ")}`)
+        const updateConsentBefore = settings.persistedBool("updateCheck")
         const next = await settings.update(patch)
         // disabling the safety net must not leave speech at rest on disk
         if ("safetyNet" in patch && String((patch as Record<string, unknown>).safetyNet) === "false") {
@@ -363,7 +364,9 @@ export default Plugin.define({
         // engine-shaping settings only take effect on a fresh recognizer
         if (Object.keys(patch).some((k) => ["model", "language", "threads", "vadThreshold", "vadMinSilenceSec", "vadMinSpeechSec", "vadMaxSpeechSec", "vadEnabled"].includes(k)))
           reloadEngineWhenSafe()
-        if ("updateCheck" in patch) await updates.clear()
+        // only a real change of consent starts the update state fresh;
+        // re-saving the same value must not re-announce an acknowledged release
+        if (next.updateCheck !== updateConsentBefore) await updates.clear()
         return { json: JSON.stringify(next) }
       },
       settingsReset: async () => {

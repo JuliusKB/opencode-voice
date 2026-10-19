@@ -9,8 +9,8 @@
  */
 
 import { cpus } from "node:os"
-import { randomUUID } from "node:crypto"
-import { mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs"
+import { readFileSync } from "node:fs"
+import { withDirLock, writeAtomic } from "./fsutil"
 
 export type SettingKind = "string" | "number" | "boolean" | "choice"
 
@@ -252,37 +252,12 @@ export async function hydrate(): Promise<Settings> {
   return cache
 }
 
-async function withSettingsLock<T>(fn: () => T | Promise<T>): Promise<T> {
-  mkdirSync(dataDir(), { recursive: true })
-  for (let attempt = 0; ; attempt++) {
-    try {
-      mkdirSync(settingsLock())
-      break
-    } catch {
-      try {
-        if (Date.now() - statSync(settingsLock()).mtimeMs > 15_000)
-          rmSync(settingsLock(), { recursive: true, force: true })
-      } catch {
-        // lock disappeared between checks
-      }
-      if (attempt >= 100) throw new Error("settings are locked")
-      await Bun.sleep(20)
-    }
-  }
-  try {
-    return await fn()
-  } finally {
-    rmSync(settingsLock(), { recursive: true, force: true })
-  }
-}
+const withSettingsLock = <T>(fn: () => T | Promise<T>) => withDirLock(settingsLock(), "settings", fn)
 
 function persist(snapshot: Settings): void {
   // the FULL snapshot, not drift: if a plugin update changes a recommended
   // value, the user's effective settings must not silently change with it
-  mkdirSync(dataDir(), { recursive: true })
-  const tmp = `${settingsFile()}.tmp-${randomUUID()}`
-  writeFileSync(tmp, `${JSON.stringify(snapshot, null, 2)}\n`)
-  renameSync(tmp, settingsFile())
+  writeAtomic(settingsFile(), `${JSON.stringify(snapshot, null, 2)}\n`)
 }
 
 export async function update(patch: Settings): Promise<Settings> {

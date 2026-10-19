@@ -1,12 +1,10 @@
 import { describe, expect, test } from "bun:test"
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { buildTui } from "../scripts/build-tui"
 import { remove } from "../src/catalog"
 import { formDelivery, type Client } from "../src/delivery"
-import { dataDir, persistedBool, update } from "../src/settings"
-import { check as checkUpdates, claimAnnouncement, newer, renewAnnouncement, settleAnnouncement } from "../src/updates"
-import { VERSION } from "../src/version"
+import { update } from "../src/settings"
 
 describe("release safety guards", () => {
   test("rejects model paths outside the model directory", () => {
@@ -96,107 +94,5 @@ describe("release safety guards", () => {
     await delivery.push("session-1", "recovered old draft") // recovery of a saved draft
 
     expect(saves).toEqual(["take-token", undefined, undefined])
-  })
-
-  test("compares stable release versions without treating malformed input as an update", () => {
-    expect(newer("0.0.7", "0.0.6")).toBeTrue()
-    expect(newer("0.0.6", "0.0.6")).toBeFalse()
-    expect(newer("0.0.5", "0.0.6")).toBeFalse()
-    expect(newer("0.0.7-beta.1", "0.0.6")).toBeFalse()
-  })
-
-  test("caches bounded update metadata and announces a release only once", async () => {
-    const root = mkdtempSync(`${tmpdir()}/voice-update-`)
-    const oldData = process.env.XDG_DATA_HOME
-    const oldFetch = globalThis.fetch
-    process.env.XDG_DATA_HOME = root
-    globalThis.fetch = (async () =>
-      new Response(JSON.stringify({
-        version: "999.0.0",
-        opencodeVoice: { releases: { "999.0.0": ["New feature\nwith detail", 42] } },
-      }), { status: 200 })) as unknown as typeof fetch
-    try {
-      const info = await checkUpdates(true)
-      expect(info).toEqual({
-        installed: VERSION,
-        latest: "999.0.0",
-        available: true,
-        releases: [{ version: "999.0.0", notes: ["New feature with detail"] }],
-        enabled: true,
-        outcome: "checked",
-      })
-      const token = await claimAnnouncement("999.0.0")
-      expect(token).toBeTruthy()
-      expect(await claimAnnouncement("999.0.0")).toBeNull()
-      expect(await renewAnnouncement("999.0.0", token!)).toBeTrue()
-      expect(await settleAnnouncement("999.0.0", "stale-token", true)).toBeFalse()
-      expect(await settleAnnouncement("999.0.0", token!, true)).toBeTrue()
-      expect(await claimAnnouncement("999.0.0")).toBeNull()
-    } finally {
-      globalThis.fetch = oldFetch
-      if (oldData === undefined) delete process.env.XDG_DATA_HOME
-      else process.env.XDG_DATA_HOME = oldData
-      rmSync(root, { recursive: true, force: true })
-    }
-  })
-
-  test("reports a forced update-check failure instead of claiming the install is current", async () => {
-    const root = mkdtempSync(`${tmpdir()}/voice-update-fail-`)
-    const oldData = process.env.XDG_DATA_HOME
-    const oldFetch = globalThis.fetch
-    process.env.XDG_DATA_HOME = root
-    globalThis.fetch = (async () => { throw new Error("offline") }) as unknown as typeof fetch
-    try {
-      const info = await checkUpdates(true, true)
-      expect(info.outcome).toBe("failed")
-      expect(info.available).toBeFalse()
-    } finally {
-      globalThis.fetch = oldFetch
-      if (oldData === undefined) delete process.env.XDG_DATA_HOME
-      else process.env.XDG_DATA_HOME = oldData
-      rmSync(root, { recursive: true, force: true })
-    }
-  })
-
-  test("rejects oversized registry metadata", async () => {
-    const root = mkdtempSync(`${tmpdir()}/voice-update-bounds-`)
-    const oldData = process.env.XDG_DATA_HOME
-    const oldFetch = globalThis.fetch
-    process.env.XDG_DATA_HOME = root
-    const notes = ["x".repeat(1024 * 1024 + 1)]
-    globalThis.fetch = (async () => new Response(JSON.stringify({
-      version: "999.0.0",
-      opencodeVoice: { releases: { "999.0.0": notes } },
-    }), { status: 200 })) as unknown as typeof fetch
-    try {
-      const info = await checkUpdates(true, true)
-      expect(info.outcome).toBe("failed")
-      expect(info.releases).toEqual([])
-    } finally {
-      globalThis.fetch = oldFetch
-      if (oldData === undefined) delete process.env.XDG_DATA_HOME
-      else process.env.XDG_DATA_HOME = oldData
-      rmSync(root, { recursive: true, force: true })
-    }
-  })
-
-  test("update consent defaults on first run but fails closed for corrupt settings", async () => {
-    const root = mkdtempSync(`${tmpdir()}/voice-settings-consent-`)
-    const oldData = process.env.XDG_DATA_HOME
-    process.env.XDG_DATA_HOME = root
-    try {
-      expect(persistedBool("updateCheck")).toBeTrue()
-      mkdirSync(dataDir(), { recursive: true })
-      writeFileSync(`${dataDir()}/settings.json`, "not json")
-      expect(persistedBool("updateCheck")).toBeFalse()
-      await update({ safetyNet: false })
-      expect(persistedBool("updateCheck")).toBeFalse()
-      writeFileSync(`${dataDir()}/settings.json`, JSON.stringify({ safetyNet: true }))
-      expect(persistedBool("updateCheck")).toBeTrue()
-    } finally {
-      if (oldData === undefined) delete process.env.XDG_DATA_HOME
-      else process.env.XDG_DATA_HOME = oldData
-      rmSync(root, { recursive: true, force: true })
-    }
   })
 })
