@@ -7,19 +7,24 @@
 import { describe, expect, test } from "bun:test"
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
-import { dataDir, persistedBool, update } from "../src/settings"
+import { dataDir, isChannelName, persistedBool, persistedStr, update } from "../src/settings"
 import {
   acknowledgeAnnouncement,
   check,
   claimAnnouncement,
   clear,
+  probeChannel,
   renewAnnouncement,
   settleAnnouncement,
   status,
 } from "../src/updates"
-import { RELEASES, VERSION, cleanReleases, compareVersions, newer } from "../src/version"
+import { GITHUB_URL, NPM_URL, RELEASES, VERSION, cleanReleases, compareVersions, newer } from "../src/version"
 
 type Registry = () => Promise<Response>
+
+/** URL of the most recent fake registry request. */
+let lastUrl = ""
+const notFound: Registry = () => Promise.resolve(new Response("Not Found", { status: 404 }))
 
 /** Run `fn` with a fresh data dir and `registry` standing in for npm; restore everything after. */
 async function withFixture(registry: Registry, fn: (calls: () => number) => Promise<void>): Promise<void> {
@@ -28,8 +33,9 @@ async function withFixture(registry: Registry, fn: (calls: () => number) => Prom
   const oldFetch = globalThis.fetch
   let calls = 0
   process.env.XDG_DATA_HOME = root
-  globalThis.fetch = (async () => {
+  globalThis.fetch = (async (url: string | URL) => {
     calls++
+    lastUrl = String(url)
     return registry()
   }) as unknown as typeof fetch
   try {
@@ -70,6 +76,13 @@ function gatedRegistry(): { registry: Registry; release: () => void } {
     release,
   }
 }
+
+describe("project links", () => {
+  test("are plain https pages derived from package.json", () => {
+    expect(GITHUB_URL).toBe("https://github.com/JuliusKB/opencode-voice")
+    expect(NPM_URL).toBe("https://www.npmjs.com/package/@juliuskb/opencode-voice")
+  })
+})
 
 describe("version helpers", () => {
   test("compares stable versions only", () => {
@@ -142,6 +155,7 @@ describe("update checks", () => {
           { version: "998.0.0", notes: ["mid"] },
         ],
         enabled: true,
+        channel: "latest",
         outcome: "checked",
       })
     })
@@ -257,6 +271,67 @@ describe("consent", () => {
       expect(persistedBool("updateCheck")).toBeFalse()
       writeFileSync(`${dataDir()}/settings.json`, JSON.stringify({ safetyNet: true }))
       expect(persistedBool("updateCheck")).toBeTrue()
+    })
+  })
+})
+
+describe("update channel", () => {
+  test("accepts npm dist-tag names only", () => {
+    for (const ok of ["latest", "next", "beta-2", "rc_1", "v2.x"]) expect(isChannelName(ok)).toBeTrue()
+    for (const bad of ["", "1.2.3", "0next", "a b", "a/b", "@latest", "x".repeat(65), 42, null]) expect(isChannelName(bad)).toBeFalse()
+  })
+
+  test("the saved channel is read from disk; missing, invalid or unreadable settings mean latest", async () => {
+    await withFixture(newRelease, async () => {
+      expect(persistedStr("updateChannel")).toBe("latest")
+      await update({ updateChannel: "next" })
+      expect(persistedStr("updateChannel")).toBe("next")
+      mkdirSync(dataDir(), { recursive: true })
+      writeFileSync(`${dataDir()}/settings.json`, JSON.stringify({ updateChannel: "1.2.3" }))
+      expect(persistedStr("updateChannel")).toBe("latest")
+      writeFileSync(`${dataDir()}/settings.json`, "not json")
+      expect(persistedStr("updateChannel")).toBe("latest")
+    })
+  })
+
+  test("the check reads the channel's manifest and reports it", async () => {
+    await withFixture(newRelease, async () => {
+      expect((await check(true, true)).channel).toBe("latest")
+      expect(lastUrl.endsWith("/latest")).toBeTrue()
+      await clear()
+      const info = await check(true, true, "next")
+      expect(info.channel).toBe("next")
+      expect(info.available).toBeTrue()
+      expect(lastUrl.endsWith("/next")).toBeTrue()
+      expect(status("cached", true, "next").channel).toBe("next")
+    })
+  })
+
+  test("an unknown dist-tag is 'missing', not a connection failure, and still backs off", async () => {
+    await withFixture(notFound, async (calls) => {
+      const info = await check(true, true, "nope")
+      expect(info.outcome).toBe("missing")
+      expect(info.available).toBeFalse()
+      expect((await check(true, false, "nope")).outcome).toBe("cached")
+      expect(calls()).toBe(1)
+    })
+  })
+
+  test("probing a channel stores nothing and distinguishes missing from unreachable", async () => {
+    await withFixture(newRelease, async (calls) => {
+      expect(await probeChannel("next")).toBe("found")
+      expect(lastUrl.endsWith("/next")).toBeTrue()
+      expect(calls()).toBe(1)
+      expect(status("cached", true).latest).toBe("")
+    })
+    await withFixture(notFound, async () => {
+      expect(await probeChannel("nope")).toBe("missing")
+    })
+    await withFixture(() => Promise.reject(new Error("offline")), async () => {
+      expect(await probeChannel("next")).toBe("unreachable")
+    })
+    await withFixture(() => Promise.resolve(new Response("nope", { status: 500 })), async () => {
+      expect(await probeChannel("next")).toBe("unreachable")
     })
   })
 })

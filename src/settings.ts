@@ -110,7 +110,8 @@ export const SPECS: SettingSpec[] = [
   },
   { key: "vadEnabled", label: "VAD enabled", kind: "boolean", group: "Voice detection (VAD)", recommended: true, hint: "pause detection: splits takes into lines, skips silence" },
   { key: "vadThreshold", label: "VAD threshold", kind: "number", group: "Voice detection (VAD)", recommended: 0.5, hint: "0..1 — higher = stricter about what counts as speech" },
-  { key: "vadMinSilenceSec", label: "VAD min silence s", kind: "number", group: "Voice detection (VAD)", recommended: 0.4, hint: "line-break sensitivity" },
+  // shorter values split speech into isolated one-word lines
+  { key: "vadMinSilenceSec", label: "VAD min silence s", kind: "number", group: "Voice detection (VAD)", recommended: 0.8, hint: "line-break sensitivity" },
   { key: "vadMinSpeechSec", label: "VAD min speech s", kind: "number", group: "Voice detection (VAD)", recommended: 0.25, hint: "shorter sounds are ignored as noise" },
   { key: "vadMaxSpeechSec", label: "VAD max speech s", kind: "number", group: "Voice detection (VAD)", recommended: 120, hint: "safety valve; keep ABOVE decode ceiling — pause-aware splitting handles the 30s engine limit" },
   {
@@ -131,7 +132,23 @@ export const SPECS: SettingSpec[] = [
   { key: "toastInfoMs", label: "Toast info ms", kind: "number", group: "Interface", recommended: 5000, hint: "how long info popups stay" },
   { key: "toastErrorMs", label: "Toast error ms", kind: "number", group: "Interface", recommended: 10000, hint: "how long error popups stay" },
   { key: "debugLog", label: "Debug logging", kind: "boolean", group: "Debug", recommended: false, hint: "verbose lines in the voice log" },
+  {
+    key: "updateChannel",
+    label: "Update channel",
+    kind: "string",
+    group: "Debug",
+    recommended: "latest",
+    hint: "npm dist-tag the update check follows; must match the @tag of this plugin in your opencode.json",
+  },
 ]
+
+/**
+ * npm dist-tag names: letters, digits, `.`, `_`, `-`; must start with a letter
+ * (npm refuses tags that parse as versions) and stay short.
+ */
+export function isChannelName(value: unknown): value is string {
+  return typeof value === "string" && /^[A-Za-z][A-Za-z0-9._-]{0,63}$/.test(value)
+}
 
 /** Groups shown behind the "Advanced…" row (second menu page). */
 export const ADVANCED_GROUPS: string[] = ["Decoding", "Voice detection (VAD)", "Level meter", "Interface", "Debug"]
@@ -173,6 +190,7 @@ function validValue(spec: SettingSpec, value: unknown): string | number | boolea
   if (spec.kind === "choice" && !spec.choices?.includes(value)) return undefined
   if (spec.key === "model" && (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(value) || value === "." || value === ".."))
     return undefined
+  if (spec.key === "updateChannel" && !isChannelName(value)) return undefined
   return value
 }
 
@@ -213,19 +231,33 @@ export function bool(key: string): boolean {
   return cache[key] === true || cache[key] === "true"
 }
 
-/** Read one boolean from the shared file, bypassing this module instance's cache. */
+const UNREADABLE = Symbol("settings file unreadable")
+
+/** One setting straight from the shared file, bypassing this module instance's cache. */
+function persistedValue(spec: SettingSpec): string | number | boolean | typeof UNREADABLE {
+  try {
+    const stored = JSON.parse(readFileSync(settingsFile(), "utf8")) as Record<string, unknown>
+    return validValue(spec, stored[spec.key]) ?? spec.recommended
+  } catch (error) {
+    // No file means first run, so the documented default applies. Any other
+    // read/parse failure is reported so callers can fail closed.
+    return (error as NodeJS.ErrnoException)?.code === "ENOENT" ? spec.recommended : UNREADABLE
+  }
+}
+
+/** Boolean from disk; an unreadable file is `false` (uncertainty must not enable network IO). */
 export function persistedBool(key: string): boolean {
   const spec = SPECS.find((entry) => entry.key === key && entry.kind === "boolean")
   if (!spec) throw new Error(`unknown boolean setting: ${key}`)
-  try {
-    const stored = JSON.parse(readFileSync(settingsFile(), "utf8")) as Record<string, unknown>
-    const value = validValue(spec, stored[key])
-    return typeof value === "boolean" ? value : spec.recommended === true
-  } catch (error) {
-    // No file means first run, so use the documented default. Any other
-    // read/parse failure fails closed: uncertainty must not enable network IO.
-    return (error as NodeJS.ErrnoException)?.code === "ENOENT" ? spec.recommended === true : false
-  }
+  return persistedValue(spec) === true
+}
+
+/** String from disk; an unreadable file yields the recommended value. */
+export function persistedStr(key: string): string {
+  const spec = SPECS.find((entry) => entry.key === key && entry.kind === "string")
+  if (!spec) throw new Error(`unknown string setting: ${key}`)
+  const value = persistedValue(spec)
+  return value === UNREADABLE ? String(spec.recommended) : String(value)
 }
 
 /** Worker-side: adopt a settings snapshot sent from the main thread. */

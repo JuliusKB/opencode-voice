@@ -6,13 +6,22 @@
 import pkg from "../package.json"
 
 type PackageMetadata = {
+  name?: unknown
   version?: unknown
+  description?: unknown
+  repository?: { url?: unknown }
   opencodeVoice?: { releases?: unknown }
 }
 
 const metadata = pkg as PackageMetadata
 
 export const VERSION = typeof metadata.version === "string" ? metadata.version : "0.0.0"
+export const DESCRIPTION = typeof metadata.description === "string" ? metadata.description : ""
+
+const repositoryUrl = typeof metadata.repository?.url === "string" ? metadata.repository.url : ""
+/** The project's pages (About dialog), derived from package.json so they cannot drift from it. */
+export const GITHUB_URL = repositoryUrl.replace(/^git\+/, "").replace(/\.git$/, "")
+export const NPM_URL = typeof metadata.name === "string" ? `https://www.npmjs.com/package/${metadata.name}` : ""
 
 /** Stable `x.y.z` only; prereleases and anything else are not comparable. */
 export function parts(version: string): [number, number, number] | null {

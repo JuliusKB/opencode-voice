@@ -1,8 +1,9 @@
 /**
- * Update awareness: reads this package's public npm `/latest` metadata at most
- * daily, caches it in updates.json, and owns the one-at-a-time announcement
- * lease so several terminals show a new release exactly once. Never installs
- * anything. Sends nothing but the request itself.
+ * Update awareness: reads this package's public npm metadata for one dist-tag
+ * (the "update channel", `latest` by default) at most daily, caches it in
+ * updates.json, and owns the one-at-a-time announcement lease so several
+ * terminals show a new release exactly once. Never installs anything. Sends
+ * nothing but the request itself.
  */
 import { readFileSync } from "node:fs"
 import { randomUUID } from "node:crypto"
@@ -11,13 +12,17 @@ import { withDirLock, writeAtomic } from "./fsutil"
 import { VERSION, cleanReleases, compareVersions, newer, parts } from "./version"
 
 const PACKAGE = "@juliuskb/opencode-voice"
-const REGISTRY = `https://registry.npmjs.org/${encodeURIComponent(PACKAGE)}/latest`
+const REGISTRY = `https://registry.npmjs.org/${encodeURIComponent(PACKAGE)}`
 const SUCCESS_TTL_MS = 24 * 60 * 60 * 1000
 const FAILURE_BACKOFF_MS = 60 * 60 * 1000
 const CLAIM_LEASE_MS = 30_000
 const MAX_RESPONSE_BYTES = 1024 * 1024
 
-export type UpdateOutcome = "checked" | "cached" | "disabled" | "failed"
+const DEFAULT_CHANNEL = "latest"
+
+/** `missing`: the registry has no such dist-tag (HTTP 404) — a configuration problem, not a network one. */
+export type UpdateOutcome = "checked" | "cached" | "disabled" | "failed" | "missing"
+type ProbeOutcome = "found" | "missing" | "unreachable"
 
 export type UpdateInfo = {
   installed: string
@@ -25,7 +30,40 @@ export type UpdateInfo = {
   available: boolean
   releases: Array<{ version: string; notes: string[] }>
   enabled: boolean
+  channel: string
   outcome: UpdateOutcome
+}
+
+class RegistryError extends Error {
+  constructor(
+    readonly outcome: "missing" | "failed",
+    message: string,
+  ) {
+    super(message)
+  }
+}
+
+/** GET the manifest of one dist-tag; 404 and other HTTP failures become typed errors. */
+async function fetchChannel(channel: string): Promise<Response> {
+  const response = await fetch(`${REGISTRY}/${encodeURIComponent(channel)}`, {
+    headers: { accept: "application/json" },
+    signal: AbortSignal.timeout(5000),
+  })
+  if (response.ok) return response
+  await response.body?.cancel().catch(() => {})
+  if (response.status === 404) throw new RegistryError("missing", `no dist-tag ${channel}`)
+  throw new RegistryError("failed", `HTTP ${response.status}`)
+}
+
+/** Does npm know this dist-tag? One request, nothing stored; used to refuse typos at input time. */
+export async function probeChannel(channel: string): Promise<ProbeOutcome> {
+  try {
+    const response = await fetchChannel(channel)
+    await response.body?.cancel().catch(() => {})
+    return "found"
+  } catch (error) {
+    return error instanceof RegistryError && error.outcome === "missing" ? "missing" : "unreachable"
+  }
 }
 
 type UpdateState = {
@@ -61,7 +99,7 @@ function writeState(state: UpdateState): void {
   writeAtomic(stateFile(), `${JSON.stringify(state, null, 2)}\n`)
 }
 
-export function status(outcome: UpdateOutcome, enabled: boolean): UpdateInfo {
+export function status(outcome: UpdateOutcome, enabled: boolean, channel = DEFAULT_CHANNEL): UpdateInfo {
   const state = readState()
   const latest = typeof state.latest === "string" ? state.latest : ""
   return {
@@ -73,6 +111,7 @@ export function status(outcome: UpdateOutcome, enabled: boolean): UpdateInfo {
       .sort(([a], [b]) => compareVersions(b, a))
       .map(([version, notes]) => ({ version, notes })),
     enabled,
+    channel,
     outcome,
   }
 }
@@ -154,8 +193,12 @@ export async function clear(): Promise<void> {
   inFlight = null
 }
 
-export function check(enabled: boolean, force = false): Promise<UpdateInfo> {
-  if (!enabled && !force) return Promise.resolve(status("disabled", false))
+/**
+ * `channel` is the npm dist-tag to read. The caller clears the state when it
+ * changes; versions are compared numerically regardless of channel.
+ */
+export function check(enabled: boolean, force = false, channel = DEFAULT_CHANNEL): Promise<UpdateInfo> {
+  if (!enabled && !force) return Promise.resolve(status("disabled", false, channel))
   if (inFlight && (inFlight.forced || !force)) return inFlight.task
   const task = (async () => {
     const now = Date.now()
@@ -166,13 +209,9 @@ export function check(enabled: boolean, force = false): Promise<UpdateInfo> {
       writeState({ ...state, attemptedAt: now })
       return state.epoch ?? 0
     })
-    if (epoch === null) return status("cached", enabled)
+    if (epoch === null) return status("cached", enabled, channel)
     try {
-      const response = await fetch(REGISTRY, {
-        headers: { accept: "application/json" },
-        signal: AbortSignal.timeout(5000),
-      })
-      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      const response = await fetchChannel(channel)
       const declaredSize = Number(response.headers.get("content-length") ?? 0)
       if (declaredSize > MAX_RESPONSE_BYTES) throw new Error("registry response too large")
       const text = await readResponseLimited(response)
@@ -193,12 +232,15 @@ export function check(enabled: boolean, force = false): Promise<UpdateInfo> {
         delete next.attemptedAt // the failure backoff applies only after a failure
         writeState(next)
       })
-    } catch {
+    } catch (error) {
       // Updates are optional. The failure is reported through `outcome`:
-      // automatic callers stay silent, a manual check tells the user.
-      return status("failed", enabled)
+      // automatic callers stay silent, a manual check tells the user. A
+      // missing dist-tag is named as such so the user fixes the channel
+      // instead of their connection.
+      const missing = error instanceof RegistryError && error.outcome === "missing"
+      return status(missing ? "missing" : "failed", enabled, channel)
     }
-    return status("checked", enabled)
+    return status("checked", enabled, channel)
   })()
   const entry = { task, forced: force }
   inFlight = entry

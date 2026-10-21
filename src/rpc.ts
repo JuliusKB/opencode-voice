@@ -246,6 +246,21 @@ export const Voice = Rpc.define({
       },
       errors: {},
     },
+    updateProbe: {
+      input: {
+        type: "object",
+        properties: { channel: { type: "string" } },
+        required: ["channel"],
+        additionalProperties: false,
+      },
+      output: {
+        type: "object",
+        properties: { outcome: { type: "string" } },
+        required: ["outcome"],
+        additionalProperties: false,
+      },
+      errors: {},
+    },
     updateClaim: {
       input: {
         type: "object",

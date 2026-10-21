@@ -352,6 +352,7 @@ export default Plugin.define({
         const patch = JSON.parse(json) as settings.Settings
         log(`settings: ${Object.entries(patch).map(([k, v]) => `${k}=${v}`).join(", ")}`)
         const updateConsentBefore = settings.persistedBool("updateCheck")
+        const updateChannelBefore = settings.persistedStr("updateChannel")
         const next = await settings.update(patch)
         // disabling the safety net must not leave speech at rest on disk
         if ("safetyNet" in patch && String((patch as Record<string, unknown>).safetyNet) === "false") {
@@ -364,9 +365,10 @@ export default Plugin.define({
         // engine-shaping settings only take effect on a fresh recognizer
         if (Object.keys(patch).some((k) => ["model", "language", "threads", "vadThreshold", "vadMinSilenceSec", "vadMinSpeechSec", "vadMaxSpeechSec", "vadEnabled"].includes(k)))
           reloadEngineWhenSafe()
-        // only a real change of consent starts the update state fresh;
-        // re-saving the same value must not re-announce an acknowledged release
-        if (next.updateCheck !== updateConsentBefore) await updates.clear()
+        // only a real change of consent or channel starts the update state
+        // fresh; re-saving the same value must not re-announce an acknowledged
+        // release (a version acknowledged on one channel stays acknowledged)
+        if (next.updateCheck !== updateConsentBefore || next.updateChannel !== updateChannelBefore) await updates.clear()
         return { json: JSON.stringify(next) }
       },
       settingsReset: async () => {
@@ -376,11 +378,19 @@ export default Plugin.define({
         return { json: JSON.stringify(next) }
       },
       updateStatus: async () => ({
-        json: JSON.stringify(updates.status("cached", settings.persistedBool("updateCheck"))),
+        json: JSON.stringify(
+          updates.status("cached", settings.persistedBool("updateCheck"), settings.persistedStr("updateChannel")),
+        ),
       }),
       updateRefresh: async (input) => {
         const force = Boolean((input as { force?: boolean }).force)
-        return { json: JSON.stringify(await updates.check(settings.persistedBool("updateCheck"), force)) }
+        const info = await updates.check(settings.persistedBool("updateCheck"), force, settings.persistedStr("updateChannel"))
+        return { json: JSON.stringify(info) }
+      },
+      updateProbe: async (input) => {
+        const { channel } = input as { channel: string }
+        // user-initiated, one request: does npm know the dist-tag before we save it?
+        return { outcome: settings.isChannelName(channel) ? await updates.probeChannel(channel) : "missing" }
       },
       updateClaim: async (input) => ({
         token: (await updates.claimAnnouncement((input as { version: string }).version)) ?? "",

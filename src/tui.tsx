@@ -5,8 +5,8 @@
 import { Plugin, usePlugin } from "@opencode/plugin/tui"
 import { Voice } from "./rpc"
 import { formDelivery, type Client } from "./delivery"
-import { ADVANCED_GROUPS, DEFAULTS, SPECS, type Settings } from "./settings"
-import { RELEASES, VERSION, compareVersions } from "./version"
+import { ADVANCED_GROUPS, DEFAULTS, SPECS, isChannelName, type Settings } from "./settings"
+import { DESCRIPTION, GITHUB_URL, NPM_URL, RELEASES, VERSION, compareVersions } from "./version"
 import type { UpdateInfo } from "./updates" // type-only: nothing of the server module reaches the panel bundle
 
 /** Toast policy: the panel and the form are the real feedback. */
@@ -186,6 +186,7 @@ type VoiceMethods = {
   recoverPeek(input: Record<string, never>): Promise<{ kind: "draft" | "audio" | "both" | "none"; text: string; wav: string }>
   updateStatus(input: Record<string, never>): Promise<JsonResult>
   updateRefresh(input: { force?: boolean }): Promise<JsonResult>
+  updateProbe(input: { channel: string }): Promise<{ outcome: string }>
   updateClaim(input: { version: string }): Promise<{ token: string }>
   updateRenew(input: { version: string; token: string }): Promise<{ renewed: boolean }>
   updateAcknowledge(input: { version: string }): Promise<Record<string, never>>
@@ -201,7 +202,8 @@ function updateMessage(info: UpdateInfo): string {
   const notes = info.releases.length
     ? info.releases.map((release) => `v${release.version}\n${release.notes.map((line) => `• ${line}`).join("\n")}`).join("\n\n")
     : "A newer release is available. See the project release notes for details."
-  return `OpenCode Voice v${info.latest} is available.\n\n${notes}\n\nNothing was installed or changed.\n\nUpdate with OpenCode's plugin updater when you choose.`
+  const channel = info.channel && info.channel !== "latest" ? ` (channel ${info.channel})` : ""
+  return `OpenCode Voice v${info.latest} is available${channel}.\n\n${notes}\n\nThis notice installed nothing. OpenCode itself picks up the new version the next time it starts.`
 }
 
 function rememberUpdate(info: UpdateInfo): void {
@@ -225,11 +227,23 @@ async function refreshUpdates(context: Ctx, force: boolean): Promise<UpdateInfo 
   }
   rememberUpdate(info)
   if (info.outcome === "failed" && force) toastCheckFailed(context)
+  // a missing dist-tag is a configuration problem, so it is named even for
+  // automatic checks: silence here would hide a dead channel for good
+  if (info.outcome === "missing") toastChannelMissing(context, info.channel)
   return info
 }
 
 function toastCheckFailed(context: Ctx): void {
   context.ui.toast.show({ title: "OpenCode Voice", message: "Could not check for updates. Check your connection and try again.", variant: "error", duration: 7000 })
+}
+
+function toastChannelMissing(context: Ctx, channel: string): void {
+  context.ui.toast.show({
+    title: "OpenCode Voice",
+    message: `Update channel "${channel}" does not exist on npm. Change it under Advanced → Debug (default: latest).`,
+    variant: "error",
+    duration: 10000,
+  })
 }
 
 async function releaseNotesMenu(context: Ctx): Promise<void> {
@@ -249,6 +263,18 @@ async function releaseNotesMenu(context: Ctx): Promise<void> {
   await context.ui.dialog.alert({
     title: `OpenCode Voice v${choice}`,
     message: notes.map((line) => `• ${line}`).join("\n") || "No release notes recorded.",
+  })
+}
+
+/**
+ * Name, version, and where the project lives. Plain text on purpose: the
+ * terminal makes the addresses clickable and focuses the browser itself,
+ * which a page opened from the server process would not get.
+ */
+async function aboutDialog(context: Ctx): Promise<void> {
+  await context.ui.dialog.alert({
+    title: "About OpenCode Voice",
+    message: [`OpenCode Voice v${VERSION}`, "", DESCRIPTION, "", "", "", "", `github: ${GITHUB_URL}`, "", `npm: ${NPM_URL}`].join("\n"),
   })
 }
 
@@ -294,12 +320,18 @@ const LANGUAGES: Array<[string, string]> = [
 /** Push a patch to the server (source of truth) and refresh the local copy. */
 async function save(context: Ctx, patch: Settings) {
   const updatesWereOn = cfg().updateCheck === true
+  const channelBefore = cfg().updateChannel
   const r = await voiceRpc(context).settingsSet({ json: JSON.stringify(patch) })
   setCfg(JSON.parse(r.json) as Settings)
   // the boolean editor always sends a real boolean
   if (patch.updateCheck === false) setAvailableUpdate(null)
-  if (patch.updateCheck === true && !updatesWereOn) {
-    // consent just given: check now and announce from the fresh state
+  const consentGiven = patch.updateCheck === true && !updatesWereOn
+  // the server wiped the update state on a channel change: what the panel
+  // remembers came from the old channel and must not survive it
+  const channelChanged = "updateChannel" in patch && cfg().updateChannel !== channelBefore
+  if (channelChanged) setAvailableUpdate(null)
+  if (consentGiven || (channelChanged && cfg().updateCheck === true)) {
+    // consent just given or channel switched: check now, announce from the fresh state
     const info = await refreshUpdates(context, true)
     if (info) await showAutomaticUpdate(context, info)
   }
@@ -399,6 +431,29 @@ async function editSetting(context: Ctx, key: string) {
       options: devices.map((dev) => ({ title: dev, value: dev })),
     })
     if (picked) await save(context, { device: picked })
+    return
+  }
+
+  if (key === "updateChannel") {
+    const typed = await context.ui.dialog.prompt({ title, placeholder: `recommended: ${spec.recommended}`, value: String(value) })
+    if (typed === undefined) return
+    const channel = typed.trim() === "" ? String(spec.recommended) : typed.trim()
+    if (channel === String(value)) return
+    if (!isChannelName(channel)) {
+      context.ui.toast.show({ title: "not an npm tag", message: `${channel} — letters, digits, . _ -; must start with a letter`, variant: "error" })
+      return
+    }
+    // one user-initiated registry request: a typo is refused now, not
+    // discovered as a daily failed check
+    context.ui.toast.show({ title: "OpenCode Voice", message: `Checking npm for channel ${channel}…`, duration: 5000 })
+    const { outcome } = await voiceRpc(context).updateProbe({ channel }).catch(() => ({ outcome: "unreachable" }))
+    if (outcome === "missing") {
+      context.ui.toast.show({ title: "channel unchanged", message: `${channel} does not exist on npm for this package`, variant: "error", duration: 7000 })
+      return
+    }
+    if (outcome === "unreachable")
+      context.ui.toast.show({ title: "OpenCode Voice", message: `Could not reach npm to verify ${channel}. Saved anyway; a check will report it if it does not exist.`, duration: 7000 })
+    await save(context, { updateChannel: channel })
     return
   }
 
@@ -651,6 +706,7 @@ async function settingsMenuLoop(context: Ctx) {
           category: "More",
         },
         { title: "Reset everything to recommended", value: "@reset", category: "More" },
+        { title: "About", value: "@about", category: "More" },
       ],
     })
     if (!choice) return
@@ -686,6 +742,10 @@ async function settingsMenuLoop(context: Ctx) {
       else if (info?.outcome === "checked")
         context.ui.toast.show({ title: "OpenCode Voice", message: `up to date — v${VERSION}`, duration: 5000 })
       return
+    }
+    if (choice === "@about") {
+      await aboutDialog(context)
+      continue
     }
     if (choice === "@whatsnew") {
       await releaseNotesMenu(context)

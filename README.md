@@ -65,10 +65,12 @@ it will be opt-in and off by default. Local stays the default.
 
 ### Update notifications
 
-Version `0.0.7` is dedicated to update awareness and release notes. The panel
-shows the installed Voice version, and the plugin can announce newer published
-versions with their complete release notes. It never installs updates; use
-OpenCode's normal plugin updater when you choose, for example:
+The panel shows the installed Voice version, and the plugin can announce newer
+published versions with their complete release notes. The plugin itself never
+installs anything. Installing is OpenCode's job: it resolves the plugin entry in
+your `opencode.json` when it starts and picks up a newer published version on
+its own, so the announcement tells you what the next restart brings. You can
+also run it by hand:
 
 ```sh
 opencode plugin update @juliuskb/opencode-voice
@@ -80,6 +82,13 @@ release notifications. A manual **Check for updates now** action remains
 available. Re-enabling automatic checks clears the cached update state and
 starts fresh. Failed offline checks may retry on a later launch after the
 backoff period.
+
+**Update channel** (Advanced → Debug, default `latest`) is the npm dist-tag the
+check follows. Set it to the same tag your `opencode.json` installs from, for
+example `next` for `"@juliuskb/opencode-voice@next"`; the plugin cannot see
+which tag OpenCode uses. Entering a tag makes one request to npm to verify it
+exists (even when **Check for updates** is off; nothing else is sent), and
+changing it clears the cached update state.
 
 ## Requirements
 
@@ -225,9 +234,13 @@ means there was nothing on disk. The key is configurable under Shortcuts.
 - **Behavior** — model RAM residency, notification verbosity, the daily
   update check (on/off), the safety net, queue-vs-steer delivery
 - **Shortcuts** — all key bindings
+- **More** — Advanced settings, log viewer, update check, release notes,
+  model unload, reset, **About** (version and the project's GitHub and npm
+  pages)
 
 **Advanced…** holds the tuned-by-default knobs: decode chunking, VAD
-sensitivity, level-meter style/size/rate, toast timings, debug logging.
+sensitivity, level-meter style/size/rate, toast timings, debug logging, the
+update channel.
 Changed values are marked `*` with their recommended value shown; clearing a
 field reverts to it; one action resets everything.
 
@@ -257,7 +270,9 @@ Opening the model manager checks k2-fsa's GitHub release catalog; model files
 are downloaded from GitHub only after your explicit confirmation. Audio and
 transcripts are never sent with those requests.
 The optional daily update check requests only this package's public metadata
-from npm. Disable **Check for updates** under Behavior to make no such request.
+from npm. Disable **Check for updates** under Behavior to make no such request;
+the only remaining one is the single verification when you type a new update
+channel yourself.
 **Deleting the directory above is a complete uninstall of all plugin data.**
 
 ## Troubleshooting
