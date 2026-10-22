@@ -40,7 +40,8 @@
       "0.0.9": [
         "Long phrases are now cut at real pauses before the decode ceiling, which removes duplicated words and stray periods at the cut.",
         "Lines made only of filler words (uh, um, hmm…) are dropped; the list is a setting in the new Cleanup group, so other languages can use their own, and off disables it.",
-        "Model downloads are checked first: a missing tar or bzip2 and an unwritable model directory are named before anything is fetched, low disk space asks before starting, the progress bar says when it is extracting, and only the needed files leave the archive, which halves the disk space an install needs."
+        "Model downloads are checked first: a missing tar or bzip2 and an unwritable model directory are named before anything is fetched, low disk space asks before starting, the progress bar says when it is extracting, and only the needed files leave the archive, which halves the disk space an install needs.",
+        "Verified on OpenCode 2.1.1."
       ]
     }
   },

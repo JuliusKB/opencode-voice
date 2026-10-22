@@ -102,7 +102,7 @@ changing it clears the cached update state.
 - **Linux** (macOS/Windows planned). Audio capture requires `pw-record`
   (PipeWire), `arecord` (ALSA), or `ffmpeg`; archive extraction requires
   `tar` with bzip2 support. These are already present on most distributions.
-- OpenCode v2.0.31 or newer. The plugin runs inside OpenCode's bundled Bun runtime; each release is tested against supported current OpenCode versions.
+- OpenCode. Tested with OpenCode 2.1.1; older versions are likely to work, since the plugin uses only the public plugin API and OpenCode's bundled Bun runtime, but they are not tested. Each release's notes name the OpenCode version it was verified on.
 - ~110 MB–1.9 GB disk per model (downloaded on first run, your choice of size).
 
 ## Performance
