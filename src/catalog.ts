@@ -253,6 +253,17 @@ export function remove(name: string): void {
 
 export type Stage = "downloading" | "extracting" | "verifying"
 export type OnProgress = (pct: number, stage: Stage) => void
+
+/** Where each stage begins on the 0–100 bar; only the transfer has measurable progress within it. */
+const STAGE_ORDER: Stage[] = ["downloading", "extracting", "verifying"]
+const STAGE_START: Record<Stage, number> = { downloading: 0, extracting: 95, verifying: 98 }
+/** Bar position for `fraction` (0..1) of the way through `stage`. */
+export function progressAt(stage: Stage, fraction: number): number {
+  const i = STAGE_ORDER.indexOf(stage)
+  const from = STAGE_START[stage]
+  const to = i + 1 < STAGE_ORDER.length ? STAGE_START[STAGE_ORDER[i + 1]] : 100
+  return Math.floor(from + Math.max(0, Math.min(1, fraction)) * (to - from))
+}
 type Job = { name: string; onProgress: OnProgress; done: (err?: Error) => void }
 let active: { name: string; abort: AbortController } | null = null
 const queue: Job[] = []
@@ -313,7 +324,7 @@ async function download(name: string, onProgress: OnProgress): Promise<void> {
     // a tar that cannot read the archive fails here, before the transfer
     const tar = await probeTar()
     if (!tar.ok) throw new Error(tar.problem)
-    const onPct = (pct: number) => onProgress(pct, "downloading")
+    const report = (stage: Stage, fraction: number) => onProgress(progressAt(stage, fraction), stage)
     const res = await fetch(`${RELEASE}/sherpa-onnx-whisper-${name}.tar.bz2`, { signal: abort.signal })
     if (!res.ok || !res.body) throw new Error(`download failed: HTTP ${res.status}`)
     const total = Number(res.headers.get("content-length") ?? 0)
@@ -324,17 +335,17 @@ async function download(name: string, onProgress: OnProgress): Promise<void> {
       file.write(chunk)
       got += chunk.byteLength
       if (total > 0) {
-        const pct = Math.floor((got / total) * 95) // extraction is the last 5%
+        const pct = progressAt("downloading", got / total)
         if (pct !== lastPct) {
           lastPct = pct
-          onPct(pct)
+          onProgress(pct, "downloading")
         }
       }
     }
     await file.end()
     abort.signal.throwIfAborted()
 
-    onProgress(95, "extracting")
+    report("extracting", 0)
     mkdirSync(stage, { recursive: true })
     // selective: only the kept members leave the archive (half the peak disk use, half the time)
     const args = ["tar", "xjf", tmpTar, "-C", stage, "--strip-components=1", ...(tar.selective ? ["--wildcards", ...KEEP_PATTERNS] : [])]
@@ -346,7 +357,7 @@ async function download(name: string, onProgress: OnProgress): Promise<void> {
     abort.signal.throwIfAborted()
     if (extractExit !== 0)
       throw new Error(`extraction failed: ${await new Response(extract.stderr).text()}`)
-    onProgress(98, "verifying")
+    report("verifying", 0)
 
     // keep int8 + tokens only (a no-op after a selective extraction)
     for (const f of readdirSync(stage)) if (!keep(f)) rmSync(`${stage}/${f}`, { recursive: true, force: true })
@@ -372,7 +383,7 @@ async function download(name: string, onProgress: OnProgress): Promise<void> {
     const finalDir = dirFor(name)
     rmSync(finalDir, { recursive: true, force: true })
     renameSync(stage, finalDir)
-    onProgress(100, "verifying")
+    report("verifying", 1)
   } finally {
     rmSync(tmpTar, { force: true })
     rmSync(stage, { recursive: true, force: true })

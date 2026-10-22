@@ -5,6 +5,7 @@
 import { Plugin, usePlugin } from "@opencode/plugin/tui"
 import { Voice } from "./rpc"
 import { formDelivery, type Client } from "./delivery"
+import type { Stage } from "./catalog"
 import { ADVANCED_GROUPS, DEFAULTS, SPECS, isChannelName, type Settings } from "./settings"
 import { DESCRIPTION, GITHUB_URL, NPM_URL, RELEASES, VERSION, compareVersions } from "./version"
 import type { UpdateInfo } from "./updates" // type-only: nothing of the server module reaches the panel bundle
@@ -147,9 +148,10 @@ const ram = () => `${stats().rssMb}M`
 const cpu = () => `${stats().cpuPct}%`
 
 // a model currently downloading (server events; shown inline in idle)
-const [download, setDownload] = createSignal<{ name: string; pct: number; stage?: string } | null>(null)
-/** "43%" while the bytes arrive, then the stage word: the bar sits at 95+ for the whole extraction otherwise */
-const stageLabel = (d: { pct: number; stage?: string }) => (d.stage && d.stage !== "downloading" ? `${d.stage}…` : `${d.pct}%`)
+type Download = { name: string; pct: number; stage?: Stage }
+const [download, setDownload] = createSignal<Download | null>(null)
+/** The percentage while bytes arrive (the only stage with measurable progress), then the stage word. */
+const stageLabel = (d: Download) => (d.stage && d.stage !== "downloading" ? `${d.stage}…` : `${d.pct}%`)
 let pendingSelect: string | null = null
 let deferredSelect: string | null = null
 let pendingTake: { sid: string; audioSec: number } | null = null
@@ -513,8 +515,12 @@ async function modelManager(context: Ctx) {
     voiceRpc(context)
       .modelDownload({ name })
       .catch((err) => notify(context, "error", { title: "download failed to start", message: errText(err) }))
-  /** Preflight (writable directory, working tar, room on disk), then the confirm dialog. Both enter and ctrl+d go through here. */
-  const offerDownload = async (row: CatalogRow): Promise<boolean> => {
+  /**
+   * Preflight (writable directory, working tar, room on disk), then one
+   * chooser: download and switch to the model, download only, or not now.
+   * Both enter and ctrl+d go through here.
+   */
+  const offerDownload = async (row: CatalogRow): Promise<"select" | "download" | null> => {
     type Preflight = { needMb: number; freeMb: number | null; dir: string; problems: string[] }
     const pre = await voiceRpc(context)
       .modelPreflight({ name: row.name, downloadMb: row.downloadMb })
@@ -522,27 +528,30 @@ async function modelManager(context: Ctx) {
       .catch(() => null)
     if (pre?.problems.length) {
       await context.ui.dialog.alert({ title: `Cannot download ${row.name}`, message: pre.problems.join("\n\n") })
-      return false
+      return null
     }
     const gb = (mb: number) => `${(mb / 1024).toFixed(1)} GB`
-    const space =
-      pre && pre.freeMb !== null && pre.freeMb < pre.needMb
-        ? `\n\nInstalling needs about ${gb(pre.needMb)} free in ${pre.dir}; ${gb(pre.freeMb)} is available. It may fail part-way.`
-        : ""
-    const ok = await context.ui.dialog.confirm({
-      title: `Download ${row.name}`,
-      message: `${row.downloadMb}M download${row.note ? ` — ${row.note}` : ""}.${space} Download and switch to it when ready?`,
-      label: { confirm: space ? "Download anyway" : "Download + select", cancel: "Not now" },
+    const lowSpace = pre && pre.freeMb !== null && pre.freeMb < pre.needMb
+    const warning = lowSpace ? `needs ~${gb(pre.needMb)} free in ${pre.dir}, ${gb(pre.freeMb!)} available — may fail part-way` : null
+    const choice = await context.ui.dialog.select({
+      title: `Download ${row.name} — ${row.downloadMb}M${row.note ? ` · ${row.note}` : ""}`,
+      options: [
+        { title: lowSpace ? "Download anyway + select" : "Download + select", value: "select", description: warning ?? "switch to it when ready" },
+        { title: lowSpace ? "Download anyway" : "Just download", value: "download", description: warning ?? "keep the current model" },
+        { title: "Not now", value: "cancel" },
+      ],
     })
-    return ok === true // esc/undefined counts as "not now"
+    return choice === "select" || choice === "download" ? choice : null // esc counts as "not now"
   }
   while (true) {
     // (assigned inside the dialog's action callback, which control-flow analysis cannot see)
     const queued = confirmDownload as CatalogRow | null
     if (queued) {
-      // ctrl+d: download without selecting, same checks as enter
+      // ctrl+d: the same chooser as enter, reached from the action key
       confirmDownload = null
-      if (await offerDownload(queued)) {
+      const choice = await offerDownload(queued)
+      if (choice) {
+        if (choice === "select") pendingSelect = queued.name
         void startDownload(queued.name)
         context.ui.toast.show({ message: `downloading ${queued.name} — progress in the Voice panel`, duration: 5000 })
       } else cursor = queued.name
@@ -575,7 +584,7 @@ async function modelManager(context: Ctx) {
       return sorted[i + 1]?.name ?? sorted[i - 1]?.name ?? name
     }
     const picked = await context.ui.dialog.select({
-      title: "Models — enter: use · ctrl+d: download · ctrl+x: delete/cancel",
+      title: "Models — enter: use / download · ctrl+d: download · ctrl+x: delete/cancel",
       current: cursor ?? String(cfg().model),
       options: sorted.map((m) => {
         // the CATEGORY is the status — no icons, no colors, just words
@@ -646,8 +655,9 @@ async function modelManager(context: Ctx) {
       context.ui.toast.show({ message: `${picked} will be selected when ready`, duration: 4000 })
       return
     }
-    if (!(await offerDownload(row))) continue
-    pendingSelect = picked
+    const choice = await offerDownload(row)
+    if (!choice) continue
+    if (choice === "select") pendingSelect = picked
     await startDownload(picked)
     context.ui.toast.show({ message: `downloading ${picked} — progress in the Voice panel`, duration: 5000 })
     return
@@ -1230,7 +1240,7 @@ export default Plugin.define({
         })
     })
     const offDownload = voiceRpc(context).events.on("download", (event) => {
-      const d = event.data as { name: string; pct: number; stage?: string; error?: string }
+      const d = event.data as Download & { error?: string }
       if (d.pct < 0) {
         setDownload(null)
         pendingSelect = null

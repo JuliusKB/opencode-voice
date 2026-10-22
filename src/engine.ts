@@ -20,6 +20,7 @@ import sherpa from "sherpa-onnx-node"
 import { bool, dataDir, num, str } from "./settings"
 import { fillerSet, isFillerOnly } from "./cleanup"
 import { joinPieces, planCuts, type Range } from "./split"
+import { PAUSE_MIN_SILENCE_SEC, PAUSE_MIN_SPEECH_SEC } from "./tuning"
 
 // inside the worker there is no server log; lines are posted to the parent
 const post = (line: string) => {
@@ -120,14 +121,12 @@ function loadVad(): VadHandle | null {
 }
 
 /**
- * A second, finer Silero pass that reports pauses of >= 0.25 s inside one
- * phrase. Used only to place ceiling cuts, so it is loaded on the first
- * phrase that exceeds the ceiling and is independent of `vadEnabled` (which
- * governs line splitting). Unavailable model: no pauses, cuts fall back to
- * the quietest dip.
+ * A second, finer Silero pass that reports short pauses inside one phrase
+ * (thresholds in tuning.ts). Used only to place ceiling cuts, so it is
+ * loaded on the first phrase that exceeds the ceiling and is independent of
+ * `vadEnabled` (which governs line splitting). Unavailable model: no pauses,
+ * cuts fall back to the quietest dip.
  */
-const PAUSE_MIN_SILENCE = 0.25
-const PAUSE_MIN_SPEECH = 0.1
 let pauseVad: VadHandle | null = null
 function loadPauseVad(): VadHandle | null {
   if (pauseVad) return pauseVad
@@ -138,8 +137,8 @@ function loadPauseVad(): VadHandle | null {
         sileroVad: {
           model: vadModel(),
           threshold: num("vadThreshold"),
-          minSilenceDuration: PAUSE_MIN_SILENCE,
-          minSpeechDuration: PAUSE_MIN_SPEECH,
+          minSilenceDuration: PAUSE_MIN_SILENCE_SEC,
+          minSpeechDuration: PAUSE_MIN_SPEECH_SEC,
           maxSpeechDuration: num("vadMaxSpeechSec"),
           windowSize: VAD_WINDOW,
         },

@@ -16,14 +16,9 @@
  * (2026-10-23) and dropped: it mistook soft words for silence.
  */
 
-export type Range = { start: number; end: number }
+import { MAX_CUT_SILENCE_SEC } from "./tuning"
 
-/**
- * At most this much of a pause is kept on either side of a cut. A pause can
- * be seconds long when VAD line-splitting is off; long leading or trailing
- * silence is Whisper's classic hallucination trigger and wasted decode time.
- */
-const MAX_SILENCE_SEC = 0.5
+export type Range = { start: number; end: number }
 
 export type Piece = Range & {
   /** how this piece's end was chosen; "end" = the phrase's own end */
@@ -70,7 +65,7 @@ export function planCuts(samples: Float32Array, rate: number, ceilingSec: number
     for (const p of pauses)
       if (p.start >= bandStart && p.end <= limitAt && p.end > p.start && (!pause || p.start > pause.start)) pause = p
     if (pause) {
-      const maxSilence = Math.floor(MAX_SILENCE_SEC * rate)
+      const maxSilence = Math.floor(MAX_CUT_SILENCE_SEC * rate)
       pieces.push({ start: offset, end: Math.min(pause.end, pause.start + maxSilence), via: "pause" })
       offset = Math.max(pause.start, pause.end - maxSilence)
     } else {
