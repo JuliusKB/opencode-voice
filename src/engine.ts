@@ -18,6 +18,7 @@
  */
 import sherpa from "sherpa-onnx-node"
 import { bool, dataDir, num, str } from "./settings"
+import { joinPieces, planCuts, type Range } from "./split"
 
 // inside the worker there is no server log; lines are posted to the parent
 const post = (line: string) => {
@@ -117,6 +118,65 @@ function loadVad(): VadHandle | null {
   return vad
 }
 
+/**
+ * A second, finer Silero pass that reports pauses of >= 0.25 s inside one
+ * phrase. Used only to place ceiling cuts, so it is loaded on the first
+ * phrase that exceeds the ceiling and is independent of `vadEnabled` (which
+ * governs line splitting). Unavailable model: no pauses, cuts fall back to
+ * the quietest dip.
+ */
+const PAUSE_MIN_SILENCE = 0.25
+const PAUSE_MIN_SPEECH = 0.1
+let pauseVad: VadHandle | null = null
+let pauseVadFailed = false
+function loadPauseVad(): VadHandle | null {
+  if (pauseVad || pauseVadFailed) return pauseVad
+  try {
+    pauseVad = new sherpa.Vad(
+      {
+        sileroVad: {
+          model: vadModel(),
+          threshold: num("vadThreshold"),
+          minSilenceDuration: PAUSE_MIN_SILENCE,
+          minSpeechDuration: PAUSE_MIN_SPEECH,
+          maxSpeechDuration: num("vadMaxSpeechSec"),
+          windowSize: VAD_WINDOW,
+        },
+        sampleRate: SAMPLE_RATE,
+        numThreads: 1,
+      },
+      num("vadMaxSpeechSec") + 5,
+    ) as VadHandle
+  } catch {
+    pauseVadFailed = true
+  }
+  return pauseVad
+}
+
+/** Silences between the detector's sub-segments of one phrase, as sample ranges within it. */
+function pausesIn(phrase: Float32Array): Range[] {
+  const detector = loadPauseVad()
+  if (!detector) return []
+  detector.reset()
+  const speech: Range[] = []
+  const drain = () => {
+    while (!detector.isEmpty()) {
+      const f = detector.front()
+      speech.push({ start: f.start, end: f.start + f.samples.length })
+      detector.pop()
+    }
+  }
+  for (let i = 0; i + VAD_WINDOW <= phrase.length; i += VAD_WINDOW) {
+    detector.acceptWaveform(phrase.subarray(i, i + VAD_WINDOW) as Float32Array)
+    drain()
+  }
+  detector.flush()
+  drain()
+  const pauses: Range[] = []
+  for (let i = 0; i + 1 < speech.length; i++) pauses.push({ start: speech[i].end, end: speech[i + 1].start })
+  return pauses
+}
+
 export function isLoaded(): boolean {
   return recognizer !== null
 }
@@ -160,39 +220,6 @@ function segment(samples: Float32Array): Float32Array[] | null {
   detector.flush()
   drain()
   return out
-}
-
-/** Quietest 100ms window within the search band before `end`, as a sample index. */
-function quietestSplit(samples: Float32Array, start: number, end: number): number {
-  const band = Math.min(num("splitSearchSec") * SAMPLE_RATE, end - start - SAMPLE_RATE)
-  if (band <= 0) return end
-  const win = Math.floor(0.1 * SAMPLE_RATE)
-  let best = end
-  let bestEnergy = Number.POSITIVE_INFINITY
-  for (let pos = end - band; pos + win <= end; pos += win) {
-    let energy = 0
-    for (let i = pos; i < pos + win; i++) energy += samples[i] * samples[i]
-    if (energy < bestEnergy) {
-      bestEnergy = energy
-      best = pos + Math.floor(win / 2)
-    }
-  }
-  return best
-}
-
-/** Split one piece into decodable chunks under the engine ceiling. */
-function enforceCeiling(samples: Float32Array): Float32Array[] {
-  const limit = num("ceilingSec") * SAMPLE_RATE
-  if (samples.length <= limit) return [samples]
-  const pieces: Float32Array[] = []
-  let offset = 0
-  while (offset < samples.length) {
-    const remaining = samples.length - offset
-    const end = remaining <= limit ? samples.length : quietestSplit(samples, offset, offset + limit)
-    pieces.push(samples.subarray(offset, end) as Float32Array)
-    offset = end
-  }
-  return pieces
 }
 
 /**
@@ -251,22 +278,31 @@ export async function transcribe(
   if (segments?.length === 0)
     return { text: "", loadMs: 0, transcribeMs: performance.now() - t0 }
   const rec = load()
-  const units = (segments ?? [samples]).map(enforceCeiling)
+  // a phrase above the decode ceiling is cut at pauses (split.ts); pieces of
+  // one phrase stay one line
+  const ceiling = num("ceilingSec")
+  const units = (segments ?? [samples]).map((phrase) => ({
+    phrase,
+    pieces: planCuts(phrase, SAMPLE_RATE, ceiling, num("splitSearchSec"), phrase.length > ceiling * SAMPLE_RATE ? pausesIn(phrase) : []),
+  }))
 
   const lines: string[] = []
   let processed = 0
-  for (const chunks of units) {
+  for (const { phrase, pieces } of units) {
     const parts: string[] = []
-    for (const chunk of chunks) {
+    for (const piece of pieces) {
+      const chunk = phrase.subarray(piece.start, piece.end) as Float32Array
       const c0 = performance.now()
       parts.push(filterAnnotations(decodeChunk(rec, chunk)))
       debug(`chunk: ${(chunk.length / SAMPLE_RATE).toFixed(1)}s decoded in ${Math.round(performance.now() - c0)}ms`)
+      if (piece.via !== "end") debug(`ceiling cut via ${piece.via} at ${(piece.end / SAMPLE_RATE).toFixed(2)}s`)
       processed += chunk.length / SAMPLE_RATE
       onProgress?.(Math.min(processed, totalSec), totalSec)
       // decode blocks the loop; yield so the progress event actually flushes
       await new Promise((resolve) => setTimeout(resolve, 0))
     }
-    const line = parts.filter(Boolean).join(" ").trim()
+    const { text: line, repairs } = joinPieces(parts)
+    if (repairs) debug(`join repair: dropped ${repairs} terminator(s) at ceiling cuts`)
     if (line) lines.push(line)
   }
 

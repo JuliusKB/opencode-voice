@@ -1,6 +1,6 @@
 {
   "name": "@juliuskb/opencode-voice",
-  "version": "0.0.8",
+  "version": "0.0.9",
   "description": "Local-first voice dictation for OpenCode with push-to-talk Whisper transcription",
   "opencodeVoice": {
     "releases": {
@@ -36,6 +36,9 @@
         "Adds an Update channel setting (Advanced → Debug): the npm dist-tag the update check follows, verified against npm when entered.",
         "Adds an About entry to the menu with the version and the project's GitHub and npm pages.",
         "Recommended VAD minimum silence is now 0.8 s (was 0.4), which avoids isolated one-word lines; a saved 0.4 is kept and marked with * in the menu — reset to defaults or change it yourself."
+      ],
+      "0.0.9": [
+        "Long phrases are now cut at real pauses before the decode ceiling, which removes duplicated words and stray periods at the cut."
       ]
     }
   },

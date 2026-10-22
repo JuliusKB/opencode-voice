@@ -98,7 +98,7 @@ export const SPECS: SettingSpec[] = [
     // cores-2 leaves headroom for opencode's server + UI threads
   { key: "threads", label: "Engine threads", kind: "number", group: "Decoding", recommended: Math.max(1, cpus().length - 2), hint: "default: machine cores - 2" },
   { key: "ceilingSec", label: "Decode ceiling s", kind: "number", group: "Decoding", recommended: 25, hint: "max seconds per decode chunk; engine hard limit is 30" },
-  { key: "splitSearchSec", label: "Split search s", kind: "number", group: "Decoding", recommended: 4, hint: "pause-hunting window for forced splits" },
+  { key: "splitSearchSec", label: "Split search s", kind: "number", group: "Decoding", recommended: 8, hint: "seconds before the decode ceiling searched for a pause to cut at" },
   {
     key: "filterAnnotations",
     label: "Filter noise annotations",
