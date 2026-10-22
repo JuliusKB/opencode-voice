@@ -7,11 +7,113 @@
  * Nothing is ever downloaded without an explicit user action.
  */
 import { randomUUID } from "node:crypto"
-import { existsSync, mkdirSync, readdirSync, renameSync, rmSync } from "node:fs"
+import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, statfsSync, writeFileSync } from "node:fs"
 import { resolve, sep } from "node:path"
 import { dataDir } from "./settings"
 
 const RELEASE = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models"
+
+/** The members kept from a model tarball; everything else (fp32 weights, test wavs) is dead weight. */
+const KEEP_PATTERNS = ["*.int8.onnx", "*-tokens.txt"]
+const keep = (f: string) => f.endsWith(".int8.onnx") || f.endsWith("-tokens.txt")
+
+/**
+ * A 192-byte .tar.bz2 holding x/a.int8.onnx, x/b-tokens.txt, x/c.onnx. Extracting
+ * it proves, before any large download, that this machine's tar exists, can
+ * read bzip2, and (ideally) can select members, which halves peak disk use.
+ */
+const PROBE_TAR_BZ2 =
+  "QlpoOTFBWSZTWWvAvgQAAPz7hMmAAMBAA//AGEF6KZ5AAACACDAArNCSoAAAaAAAJUIyAABoANNAVRQQ00AaAZAGn3aPSWZVug8kLTXVwiSQJjL2NqOcCUKWJsLBcWqCCkiYUnwoNerps+3GaLCHUkGGGHfSRsynClmlMOsSrmOBRUTEVzUVBoTtWDAYlaIkKWrNIH2sAKUlLunod68jWbgZBeWnwy4lZ2kpvP2fEqY7rWqSD+LuSKcKEg14F8CA"
+
+type TarProbe = { ok: true; selective: boolean } | { ok: false; problem: string }
+let tarProbe: Promise<TarProbe> | null = null
+
+async function tryExtract(archive: string, into: string, selective: boolean): Promise<string | null> {
+  mkdirSync(into, { recursive: true })
+  const args = ["tar", "xjf", archive, "-C", into, "--strip-components=1", ...(selective ? ["--wildcards", ...KEEP_PATTERNS] : [])]
+  const proc = Bun.spawn(args, { stdout: "ignore", stderr: "pipe" })
+  const code = await proc.exited
+  const err = (await new Response(proc.stderr).text()).trim()
+  if (code !== 0) return err || `tar exited with ${code}`
+  const have = (f: string) => existsSync(`${into}/${f}`)
+  if (!have("a.int8.onnx") || !have("b-tokens.txt")) return "tar extracted nothing usable"
+  if (selective && have("c.onnx")) return "tar ignored the member selection"
+  return null
+}
+
+/** Once per server: can tar here read .tar.bz2, and can it extract selected members? */
+export function probeTar(): Promise<TarProbe> {
+  if (tarProbe) return tarProbe
+  tarProbe = (async (): Promise<TarProbe> => {
+    if (!Bun.which("tar")) return { ok: false, problem: "tar is not installed. Install it (e.g. sudo apt install tar) and try again." }
+    const work = `${modelsDir()}/.tar-probe-${randomUUID()}`
+    try {
+      mkdirSync(work, { recursive: true })
+      const archive = `${work}/probe.tar.bz2`
+      writeFileSync(archive, Buffer.from(PROBE_TAR_BZ2, "base64"))
+      if ((await tryExtract(archive, `${work}/selective`, true)) === null) return { ok: true, selective: true }
+      const plain = await tryExtract(archive, `${work}/plain`, false)
+      if (plain === null) return { ok: true, selective: false }
+      const bz = /bzip2|bunzip2|Cannot exec|not found|Child returned/i.test(plain)
+      return {
+        ok: false,
+        problem: bz
+          ? "tar cannot read .tar.bz2 archives here. Install bzip2 (e.g. sudo apt install bzip2) and try again."
+          : `tar failed on a test archive: ${plain.split("\n")[0]}`,
+      }
+    } catch (err) {
+      return { ok: false, problem: `could not test tar: ${(err as Error).message}` }
+    } finally {
+      rmSync(work, { recursive: true, force: true })
+    }
+  })()
+  return tarProbe
+}
+
+export type Preflight = {
+  /** peak disk use during install, MB: tarball + extracted members (+ a margin) */
+  needMb: number
+  /** free space in the model directory, MB; null when it cannot be read */
+  freeMb: number | null
+  dir: string
+  /** hard stops, each one sentence naming what to fix; empty when the download can start */
+  problems: string[]
+}
+
+/**
+ * Checks run before a download is offered: a writable model directory, a tar
+ * that can read the archive, and how much room the install needs versus what
+ * is free. Space is reported, not enforced: free-space figures can be wrong on
+ * network and overlay filesystems, so the UI asks instead of refusing.
+ */
+export async function preflight(name: string): Promise<Preflight> {
+  assertName(name)
+  const dir = modelsDir()
+  const problems: string[] = []
+  try {
+    mkdirSync(dir, { recursive: true })
+    const probe = `${dir}/.write-probe-${randomUUID()}`
+    writeFileSync(probe, "")
+    rmSync(probe, { force: true })
+  } catch (err) {
+    problems.push(`The model directory ${dir} is not writable: ${(err as Error).message}`)
+  }
+  const tar = problems.length ? null : await probeTar()
+  if (tar && !tar.ok) problems.push(tar.problem)
+  let freeMb: number | null = null
+  try {
+    const s = statfsSync(dir)
+    freeMb = Math.floor((Number(s.bavail) * Number(s.bsize)) / 1024 / 1024)
+  } catch {
+    freeMb = null
+  }
+  const entry = ((await fetchRemote()) ?? CATALOG).find((e) => e.name === name)
+  const downloadMb = entry?.downloadMb ?? 0
+  // observed for small.en: 606 MB tarball, 1.5 GB fully extracted, 457 MB kept
+  const factor = tar && tar.ok && tar.selective ? 1.8 : 3.5
+  const needMb = Math.round(downloadMb * factor) + 100
+  return { needMb, freeMb, dir, problems }
+}
 
 export interface CatalogEntry {
   name: string
@@ -136,7 +238,9 @@ export function remove(name: string): void {
 
 // ---- download queue: one transfer at a time, others wait ------------------
 
-type Job = { name: string; onPct: (pct: number) => void; done: (err?: Error) => void }
+export type Stage = "downloading" | "extracting" | "verifying"
+export type OnProgress = (pct: number, stage: Stage) => void
+type Job = { name: string; onProgress: OnProgress; done: (err?: Error) => void }
 let active: { name: string; abort: AbortController } | null = null
 const queue: Job[] = []
 
@@ -161,12 +265,12 @@ export function cancel(name: string): boolean {
 }
 
 /** Enqueue a download; resolves when THIS model finishes (or fails). */
-export function request(name: string, onPct: (pct: number) => void): Promise<void> {
+export function request(name: string, onProgress: OnProgress): Promise<void> {
   assertName(name)
   if (active?.name === name || queue.some((j) => j.name === name) || installed().has(name))
     return Promise.resolve()
   return new Promise((resolve, reject) => {
-    queue.push({ name, onPct, done: (err) => (err ? reject(err) : resolve()) })
+    queue.push({ name, onProgress, done: (err) => (err ? reject(err) : resolve()) })
     void pump()
   })
 }
@@ -176,7 +280,7 @@ async function pump(): Promise<void> {
   const job = queue.shift()
   if (!job) return
   try {
-    await download(job.name, job.onPct)
+    await download(job.name, job.onProgress)
     job.done()
   } catch (err) {
     job.done(err instanceof Error ? err : new Error(String(err)))
@@ -185,7 +289,7 @@ async function pump(): Promise<void> {
   }
 }
 
-async function download(name: string, onPct: (pct: number) => void): Promise<void> {
+async function download(name: string, onProgress: OnProgress): Promise<void> {
   assertName(name)
   const abort = new AbortController()
   active = { name, abort }
@@ -193,6 +297,10 @@ async function download(name: string, onPct: (pct: number) => void): Promise<voi
   const stage = `${modelsDir()}/.extract-${name}-${randomUUID()}`
   try {
     mkdirSync(modelsDir(), { recursive: true })
+    // a tar that cannot read the archive fails here, before the transfer
+    const tar = await probeTar()
+    if (!tar.ok) throw new Error(tar.problem)
+    const onPct = (pct: number) => onProgress(pct, "downloading")
     const res = await fetch(`${RELEASE}/sherpa-onnx-whisper-${name}.tar.bz2`, { signal: abort.signal })
     if (!res.ok || !res.body) throw new Error(`download failed: HTTP ${res.status}`)
     const total = Number(res.headers.get("content-length") ?? 0)
@@ -213,8 +321,11 @@ async function download(name: string, onPct: (pct: number) => void): Promise<voi
     await file.end()
     abort.signal.throwIfAborted()
 
+    onProgress(95, "extracting")
     mkdirSync(stage, { recursive: true })
-    const extract = Bun.spawn(["tar", "xjf", tmpTar, "-C", stage, "--strip-components=1"], { stderr: "pipe" })
+    // selective: only the kept members leave the archive (half the peak disk use, half the time)
+    const args = ["tar", "xjf", tmpTar, "-C", stage, "--strip-components=1", ...(tar.selective ? ["--wildcards", ...KEEP_PATTERNS] : [])]
+    const extract = Bun.spawn(args, { stderr: "pipe" })
     const stopExtract = () => extract.kill("SIGTERM")
     abort.signal.addEventListener("abort", stopExtract, { once: true })
     const extractExit = await extract.exited
@@ -222,13 +333,10 @@ async function download(name: string, onPct: (pct: number) => void): Promise<voi
     abort.signal.throwIfAborted()
     if (extractExit !== 0)
       throw new Error(`extraction failed: ${await new Response(extract.stderr).text()}`)
-    onPct(98)
+    onProgress(98, "verifying")
 
-    // keep int8 + tokens only
-    for (const f of readdirSync(stage)) {
-      const keep = f.endsWith(".int8.onnx") || f.endsWith("-tokens.txt")
-      if (!keep) rmSync(`${stage}/${f}`, { recursive: true, force: true })
-    }
+    // keep int8 + tokens only (a no-op after a selective extraction)
+    for (const f of readdirSync(stage)) if (!keep(f)) rmSync(`${stage}/${f}`, { recursive: true, force: true })
     for (const file of [`${name}-encoder.int8.onnx`, `${name}-decoder.int8.onnx`, `${name}-tokens.txt`])
       if (!existsSync(`${stage}/${file}`)) throw new Error(`downloaded model is incomplete: missing ${file}`)
     abort.signal.throwIfAborted()
@@ -251,7 +359,7 @@ async function download(name: string, onPct: (pct: number) => void): Promise<voi
     const finalDir = dirFor(name)
     rmSync(finalDir, { recursive: true, force: true })
     renameSync(stage, finalDir)
-    onPct(100)
+    onProgress(100, "verifying")
   } finally {
     rmSync(tmpTar, { force: true })
     rmSync(stage, { recursive: true, force: true })

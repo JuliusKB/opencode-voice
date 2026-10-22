@@ -136,6 +136,21 @@ export const Voice = Rpc.define({
       },
       errors: {},
     },
+    modelPreflight: {
+      input: {
+        type: "object",
+        properties: { name: { type: "string" } },
+        required: ["name"],
+        additionalProperties: false,
+      },
+      output: {
+        type: "object",
+        properties: { json: { type: "string", description: "Preflight: needMb, freeMb|null, dir, problems[]" } },
+        required: ["json"],
+        additionalProperties: false,
+      },
+      errors: {},
+    },
     modelDownload: {
       input: {
         type: "object",
@@ -403,6 +418,7 @@ export const Voice = Rpc.define({
         properties: {
           name: { type: "string" },
           pct: { type: "number" },
+          stage: { type: "string", description: "downloading | extracting | verifying" },
           error: { type: "string" },
         },
         required: ["name", "pct"],

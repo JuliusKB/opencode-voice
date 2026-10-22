@@ -302,6 +302,12 @@ export default Plugin.define({
       },
       devices: async () => ({ devices: await capture.listDevices(), recorders: capture.recorderStates() }),
       modelsList: async () => ({ json: JSON.stringify(await catalog.list()) }),
+      modelPreflight: async (input) => {
+        const { name } = input as { name: string }
+        const result = await catalog.preflight(name)
+        if (result.problems.length) log(`download preflight ${name}: ${result.problems.join(" | ")}`)
+        return { json: JSON.stringify(result) }
+      },
       modelDownload: async (input) => {
         const { name } = input as { name: string }
         // A repeated request from this location is already represented by the
@@ -316,12 +322,12 @@ export default Plugin.define({
         // deliver them out of order (e.g. 49 -> 29). Serialize this download's
         // stream so the panel is monotonic; ignore failures after unload.
         let eventChain = Promise.resolve()
-        const emitDownload = (data: { name: string; pct: number; error?: string }) => {
+        const emitDownload = (data: { name: string; pct: number; stage?: catalog.Stage; error?: string }) => {
           eventChain = eventChain.then(() => registration.events.emit("download", data)).catch(() => {})
         }
         void catalog
-          .request(name, (pct) => {
-            emitDownload({ name, pct })
+          .request(name, (pct, stage) => {
+            emitDownload({ name, pct, stage })
           })
           .then(() => log(`download done: ${name}`))
           .catch((err) => {

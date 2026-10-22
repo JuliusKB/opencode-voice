@@ -147,7 +147,9 @@ const ram = () => `${stats().rssMb}M`
 const cpu = () => `${stats().cpuPct}%`
 
 // a model currently downloading (server events; shown inline in idle)
-const [download, setDownload] = createSignal<{ name: string; pct: number } | null>(null)
+const [download, setDownload] = createSignal<{ name: string; pct: number; stage?: string } | null>(null)
+/** "43%" while the bytes arrive, then the stage word: the bar sits at 95+ for the whole extraction otherwise */
+const stageLabel = (d: { pct: number; stage?: string }) => (d.stage && d.stage !== "downloading" ? `${d.stage}…` : `${d.pct}%`)
 let pendingSelect: string | null = null
 let deferredSelect: string | null = null
 let pendingTake: { sid: string; audioSec: number } | null = null
@@ -187,6 +189,7 @@ type VoiceMethods = {
   updateStatus(input: Record<string, never>): Promise<JsonResult>
   updateRefresh(input: { force?: boolean }): Promise<JsonResult>
   updateProbe(input: { channel: string }): Promise<{ outcome: string }>
+  modelPreflight(input: { name: string }): Promise<JsonResult>
   updateClaim(input: { version: string }): Promise<{ token: string }>
   updateRenew(input: { version: string; token: string }): Promise<{ renewed: boolean }>
   updateAcknowledge(input: { version: string }): Promise<Record<string, never>>
@@ -543,7 +546,7 @@ async function modelManager(context: Ctx) {
       options: sorted.map((m) => {
         // the CATEGORY is the status — no icons, no colors, just words
         const category = { installed: "Downloaded", downloading: "Downloading", queued: "Queued", available: "Available" }[m.status]
-        const pct = m.status === "downloading" && download()?.name === m.name ? ` ${download()?.pct}%` : ""
+        const pct = m.status === "downloading" && download()?.name === m.name ? ` ${stageLabel(download()!)}` : ""
         return {
           title: `${(m.name + pct).padEnd(20)} ${m.downloadMb ? `${String(m.downloadMb).padStart(4)}M` : "    –"}`,
           value: m.name,
@@ -609,10 +612,25 @@ async function modelManager(context: Ctx) {
       context.ui.toast.show({ message: `${picked} will be selected when ready`, duration: 4000 })
       return
     }
+    // before offering the download: writable directory, working tar, room on disk
+    type Preflight = { needMb: number; freeMb: number | null; dir: string; problems: string[] }
+    const pre = await voiceRpc(context)
+      .modelPreflight({ name: picked })
+      .then((r) => JSON.parse(r.json) as Preflight)
+      .catch(() => null)
+    if (pre?.problems.length) {
+      await context.ui.dialog.alert({ title: `Cannot download ${picked}`, message: pre.problems.join("\n\n") })
+      continue
+    }
+    const gb = (mb: number) => `${(mb / 1024).toFixed(1)} GB`
+    const space =
+      pre && pre.freeMb !== null && pre.freeMb < pre.needMb
+        ? `\n\nInstalling needs about ${gb(pre.needMb)} free in ${pre.dir}; ${gb(pre.freeMb)} is available. It may fail part-way.`
+        : ""
     const ok = await context.ui.dialog.confirm({
       title: `Download ${picked}`,
-      message: `${row.downloadMb}M download${row.note ? ` — ${row.note}` : ""}. Download and switch to it when ready?`,
-      label: { confirm: "Download + select", cancel: "Not now" },
+      message: `${row.downloadMb}M download${row.note ? ` — ${row.note}` : ""}.${space} Download and switch to it when ready?`,
+      label: { confirm: space ? "Download anyway" : "Download + select", cancel: "Not now" },
     })
     if (!ok) continue
     pendingSelect = picked
@@ -960,7 +978,7 @@ function VoicePanel() {
         {(dl) => (
           <>
             <text fg={base}>{`⇣ ${dl().name}`}</text>
-            <text fg={muted}>{`${bar(dl().pct)} ${dl().pct}%`}</text>
+            <text fg={muted}>{`${bar(dl().pct)} ${stageLabel(dl())}`}</text>
             <Divider />
             <Action kbd={recordKey()} label={state() === "setup" ? "models" : "record"} />
           </>
@@ -1198,7 +1216,7 @@ export default Plugin.define({
         })
     })
     const offDownload = voiceRpc(context).events.on("download", (event) => {
-      const d = event.data as { name: string; pct: number; error?: string }
+      const d = event.data as { name: string; pct: number; stage?: string; error?: string }
       if (d.pct < 0) {
         setDownload(null)
         pendingSelect = null

@@ -50,7 +50,10 @@ it will be opt-in and off by default. Local stays the default.
 - **Proofread-before-send**: transcripts arrive as a prefilled form — edit,
   submit, or discard; a new take extends the open draft
 - **Model manager**: curated whisper models (tiny → medium, English and
-  multilingual), downloaded on demand, switchable any time
+  multilingual), downloaded on demand, switchable any time. Before a
+  download starts, the plugin checks that the model directory is writable,
+  that `tar` can read the archive, and how much room the install needs; a
+  problem is named in one sentence, low space asks instead of refusing
 - **Voice activity detection**: pauses become line breaks, silence is never decoded
 - **Noise-annotation filter**: whisper artifacts like `(buzzing)` or
   `[BLANK_AUDIO]` are dropped before they reach your chat
