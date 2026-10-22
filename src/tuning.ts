@@ -22,3 +22,18 @@ export const PAUSE_MIN_SPEECH_SEC = 0.1
  * decode time spent on nothing.
  */
 export const MAX_CUT_SILENCE_SEC = 0.5
+
+/**
+ * Fallback cut without a detected pause (split.ts): the quietest window of
+ * this length inside the search band. The pre-0.0.9 rule, unchanged.
+ */
+export const DIP_WINDOW_SEC = 0.1
+
+/**
+ * Peak disk use of a model install as a multiple of the tarball size
+ * (catalog.ts), plus a fixed margin. Observed for small.en on 2026-10-19:
+ * 606 MB tarball, 1.5 GB fully extracted, 457 MB kept. Selective extraction
+ * keeps only the int8 weights and tokens, so the peak is tarball + kept.
+ */
+export const INSTALL_PEAK_FACTOR = { selective: 1.8, plain: 3.5 } as const
+export const INSTALL_MARGIN_MB = 100

@@ -16,7 +16,7 @@
  * (2026-10-23) and dropped: it mistook soft words for silence.
  */
 
-import { MAX_CUT_SILENCE_SEC } from "./tuning"
+import { DIP_WINDOW_SEC, MAX_CUT_SILENCE_SEC } from "./tuning"
 
 export type Range = { start: number; end: number }
 
@@ -69,7 +69,7 @@ export function planCuts(samples: Float32Array, rate: number, ceilingSec: number
       pieces.push({ start: offset, end: Math.min(pause.end, pause.start + maxSilence), via: "pause" })
       offset = Math.max(pause.start, pause.end - maxSilence)
     } else {
-      const dip = quietestDip(samples, bandStart, limitAt, Math.round(0.1 * rate))
+      const dip = quietestDip(samples, bandStart, limitAt, Math.round(DIP_WINDOW_SEC * rate))
       pieces.push({ start: offset, end: dip, via: "dip" })
       offset = dip
     }

@@ -10,6 +10,7 @@ import { randomUUID } from "node:crypto"
 import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, statfsSync, writeFileSync } from "node:fs"
 import { resolve, sep } from "node:path"
 import { dataDir } from "./settings"
+import { INSTALL_MARGIN_MB, INSTALL_PEAK_FACTOR } from "./tuning"
 
 const RELEASE = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models"
 
@@ -122,9 +123,8 @@ export async function preflight(name: string, downloadMb?: number): Promise<Pref
   // no network here (the caller already has the size from the list it shows):
   // cached remote sizes, else the curated ones
   const sizeMb = downloadMb ?? (remote?.entries ?? CATALOG).find((e) => e.name === name)?.downloadMb ?? 0
-  // observed for small.en: 606 MB tarball, 1.5 GB fully extracted, 457 MB kept
-  const factor = tar && tar.ok && tar.selective ? 1.8 : 3.5
-  const needMb = Math.round(sizeMb * factor) + 100
+  const factor = tar && tar.ok && tar.selective ? INSTALL_PEAK_FACTOR.selective : INSTALL_PEAK_FACTOR.plain
+  const needMb = Math.round(sizeMb * factor) + INSTALL_MARGIN_MB
   return { needMb, freeMb, dir, problems }
 }
 
