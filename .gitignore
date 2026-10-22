@@ -5,3 +5,6 @@ dist/
 
 # untracked local workspace
 local/
+
+# IDE
+.idea/
