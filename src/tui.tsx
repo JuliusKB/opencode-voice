@@ -537,7 +537,7 @@ async function modelManager(context: Ctx) {
       title: `Download ${row.name} — ${row.downloadMb}M${row.note ? ` · ${row.note}` : ""}`,
       options: [
         { title: lowSpace ? "Download anyway + select" : "Download + select", value: "select", description: warning ?? "switch to it when ready" },
-        { title: lowSpace ? "Download anyway" : "Just download", value: "download", description: warning ?? "keep the current model" },
+        { title: lowSpace ? "Download anyway" : "Just download", value: "download", description: warning ?? "keep the current model selected" },
         { title: "Not now", value: "cancel" },
       ],
     })
