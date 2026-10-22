@@ -129,9 +129,9 @@ function loadVad(): VadHandle | null {
 const PAUSE_MIN_SILENCE = 0.25
 const PAUSE_MIN_SPEECH = 0.1
 let pauseVad: VadHandle | null = null
-let pauseVadFailed = false
 function loadPauseVad(): VadHandle | null {
-  if (pauseVad || pauseVadFailed) return pauseVad
+  if (pauseVad) return pauseVad
+  // not sticky on failure: the VAD model may be installed later in this process
   try {
     pauseVad = new sherpa.Vad(
       {
@@ -149,7 +149,7 @@ function loadPauseVad(): VadHandle | null {
       num("vadMaxSpeechSec") + 5,
     ) as VadHandle
   } catch {
-    pauseVadFailed = true
+    pauseVad = null
   }
   return pauseVad
 }
@@ -192,6 +192,7 @@ export function unload(): boolean {
   const had = recognizer !== null
   recognizer = null
   vad = null
+  pauseVad = null
   try {
     Bun.gc(true)
   } catch {

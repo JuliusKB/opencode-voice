@@ -139,7 +139,7 @@ export const Voice = Rpc.define({
     modelPreflight: {
       input: {
         type: "object",
-        properties: { name: { type: "string" } },
+        properties: { name: { type: "string" }, downloadMb: { type: "number", description: "tarball size as listed; avoids a registry round-trip" } },
         required: ["name"],
         additionalProperties: false,
       },

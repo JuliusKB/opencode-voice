@@ -41,10 +41,14 @@ async function tryExtract(archive: string, into: string, selective: boolean): Pr
   return null
 }
 
-/** Once per server: can tar here read .tar.bz2, and can it extract selected members? */
+/**
+ * Can tar here read .tar.bz2, and can it extract selected members? A success
+ * is cached for the server's lifetime; a failure is not, so installing bzip2
+ * or fixing permissions takes effect on the next attempt without a restart.
+ */
 export function probeTar(): Promise<TarProbe> {
   if (tarProbe) return tarProbe
-  tarProbe = (async (): Promise<TarProbe> => {
+  const run = (async (): Promise<TarProbe> => {
     if (!Bun.which("tar")) return { ok: false, problem: "tar is not installed. Install it (e.g. sudo apt install tar) and try again." }
     const work = `${modelsDir()}/.tar-probe-${randomUUID()}`
     try {
@@ -62,12 +66,20 @@ export function probeTar(): Promise<TarProbe> {
           : `tar failed on a test archive: ${plain.split("\n")[0]}`,
       }
     } catch (err) {
-      return { ok: false, problem: `could not test tar: ${(err as Error).message}` }
+      return { ok: false, problem: `could not test tar in ${modelsDir()}: ${(err as Error).message}` }
     } finally {
-      rmSync(work, { recursive: true, force: true })
+      try {
+        rmSync(work, { recursive: true, force: true })
+      } catch {
+        // a leftover probe directory is harmless; never let cleanup fail the probe
+      }
     }
   })()
-  return tarProbe
+  tarProbe = run
+  void run.then((r) => {
+    if (!r.ok) tarProbe = null
+  })
+  return run
 }
 
 export type Preflight = {
@@ -86,7 +98,7 @@ export type Preflight = {
  * is free. Space is reported, not enforced: free-space figures can be wrong on
  * network and overlay filesystems, so the UI asks instead of refusing.
  */
-export async function preflight(name: string): Promise<Preflight> {
+export async function preflight(name: string, downloadMb?: number): Promise<Preflight> {
   assertName(name)
   const dir = modelsDir()
   const problems: string[] = []
@@ -107,11 +119,12 @@ export async function preflight(name: string): Promise<Preflight> {
   } catch {
     freeMb = null
   }
-  const entry = ((await fetchRemote()) ?? CATALOG).find((e) => e.name === name)
-  const downloadMb = entry?.downloadMb ?? 0
+  // no network here (the caller already has the size from the list it shows):
+  // cached remote sizes, else the curated ones
+  const sizeMb = downloadMb ?? (remote?.entries ?? CATALOG).find((e) => e.name === name)?.downloadMb ?? 0
   // observed for small.en: 606 MB tarball, 1.5 GB fully extracted, 457 MB kept
   const factor = tar && tar.ok && tar.selective ? 1.8 : 3.5
-  const needMb = Math.round(downloadMb * factor) + 100
+  const needMb = Math.round(sizeMb * factor) + 100
   return { needMb, freeMb, dir, problems }
 }
 

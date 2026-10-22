@@ -38,6 +38,26 @@ describe("planCuts", () => {
     ])
   })
 
+  test("keeps at most 0.5 s of a long pause on either side of the cut", () => {
+    const s = signal(40)
+    const pieces = planCuts(s, RATE, 25, 8, pauses([[20, 4]])) // 4 s of silence, e.g. VAD line-splitting off
+    expect(pieces[0].end).toBe(sec(20.5))
+    expect(pieces[1].start).toBe(sec(23.5))
+  })
+
+  test("latest by position even when pauses are unsorted; a pause ending exactly at the limit counts", () => {
+    const s = signal(40)
+    const pieces = planCuts(s, RATE, 25, 8, pauses([[24.7, 0.3], [18, 0.3], [21, 0.2]]))
+    expect(pieces[0]).toEqual({ start: 0, end: sec(25), via: "pause" })
+    expect(pieces[1].start).toBe(sec(24.7))
+  })
+
+  test("zero-length pauses and a zero search band never cut on a pause", () => {
+    const s = signal(40)
+    expect(planCuts(s, RATE, 25, 8, [{ start: sec(22), end: sec(22) }])[0].via).toBe("dip")
+    expect(planCuts(s, RATE, 25, 0, pauses([[22, 0.3]]))[0].via).toBe("dip")
+  })
+
   test("falls back to the quietest dip without a usable pause", () => {
     const s = signal(60, [[22, 0.1], [47, 0.1]])
     const pieces = planCuts(s, RATE, 25, 8, [])
@@ -85,6 +105,11 @@ describe("joinPieces", () => {
   test("drops a terminator before a lowercase continuation", () => {
     expect(joinPieces(["reading the text.", "that has been laid out"])).toEqual({ text: "reading the text that has been laid out", repairs: 1 })
     expect(joinPieces(["after this,", "recording is complete."]).text).toBe("after this recording is complete.")
+  })
+  test("drops a whole ellipsis and a piece that was only punctuation", () => {
+    expect(joinPieces(["and then the...", "rest of it"])).toEqual({ text: "and then the rest of it", repairs: 1 })
+    expect(joinPieces(["one.", ".", "two"]).text).toBe("one. two")
+    expect(joinPieces(["one,", ".", "two"]).text).toBe("one, two")
   })
   test("keeps real sentence ends", () => {
     expect(joinPieces(["Done.", "Next one."])).toEqual({ text: "Done. Next one.", repairs: 0 })

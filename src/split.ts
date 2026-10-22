@@ -18,6 +18,13 @@
 
 export type Range = { start: number; end: number }
 
+/**
+ * At most this much of a pause is kept on either side of a cut. A pause can
+ * be seconds long when VAD line-splitting is off; long leading or trailing
+ * silence is Whisper's classic hallucination trigger and wasted decode time.
+ */
+const MAX_SILENCE_SEC = 0.5
+
 export type Piece = Range & {
   /** how this piece's end was chosen; "end" = the phrase's own end */
   via: "pause" | "dip" | "end"
@@ -58,11 +65,14 @@ export function planCuts(samples: Float32Array, rate: number, ceilingSec: number
     const limitAt = offset + limit
     // never cut inside the first second of a piece: keeps progress guaranteed
     const bandStart = Math.max(offset + rate, limitAt - Math.floor(searchSec * rate))
+    // the latest pause by position (not array order) that lies entirely in the band
     let pause: Range | null = null
-    for (const p of pauses) if (p.start >= bandStart && p.end <= limitAt && p.end > p.start) pause = p
+    for (const p of pauses)
+      if (p.start >= bandStart && p.end <= limitAt && p.end > p.start && (!pause || p.start > pause.start)) pause = p
     if (pause) {
-      pieces.push({ start: offset, end: pause.end, via: "pause" })
-      offset = pause.start
+      const maxSilence = Math.floor(MAX_SILENCE_SEC * rate)
+      pieces.push({ start: offset, end: Math.min(pause.end, pause.start + maxSilence), via: "pause" })
+      offset = Math.max(pause.start, pause.end - maxSilence)
     } else {
       const dip = quietestDip(samples, bandStart, limitAt, Math.round(0.1 * rate))
       pieces.push({ start: offset, end: dip, via: "dip" })
@@ -77,11 +87,11 @@ export function planCuts(samples: Float32Array, rate: number, ceilingSec: number
 const ABBREVIATIONS = new Set(["e.g.", "i.e.", "etc.", "vs.", "dr.", "mr.", "mrs.", "ms.", "a.m.", "p.m."])
 
 /**
- * Join the decoded pieces of one phrase. A piece that ends in `.` or `,`
- * while the next piece starts with a lowercase letter was terminated by the
- * cut, not by the speaker: the terminator is dropped. Uppercase and digits
- * are left alone. Empty pieces are skipped. Returns the line and how many
- * terminators were removed.
+ * Join the decoded pieces of one phrase. A piece that ends in `.`, `,` or
+ * `...` while the next piece starts with a lowercase letter was terminated
+ * by the cut, not by the speaker: the terminators are dropped. Uppercase and
+ * digits are left alone. Empty pieces, before or after the repair, are
+ * skipped. Returns the line and how many pieces were repaired.
  */
 export function joinPieces(texts: string[]): { text: string; repairs: number } {
   const parts = texts.map((t) => t.trim()).filter(Boolean)
@@ -92,8 +102,8 @@ export function joinPieces(texts: string[]): { text: string; repairs: number } {
     if (!/[.,]$/.test(cur) || !/^\p{Ll}/u.test(next)) continue
     const lastToken = cur.slice(cur.lastIndexOf(" ") + 1).toLowerCase()
     if (ABBREVIATIONS.has(lastToken)) continue
-    parts[i] = cur.slice(0, -1).trimEnd()
+    parts[i] = cur.replace(/[.,\s]+$/, "")
     repairs++
   }
-  return { text: parts.join(" ").trim(), repairs }
+  return { text: parts.filter(Boolean).join(" ").trim(), repairs }
 }

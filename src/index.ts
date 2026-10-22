@@ -303,8 +303,8 @@ export default Plugin.define({
       devices: async () => ({ devices: await capture.listDevices(), recorders: capture.recorderStates() }),
       modelsList: async () => ({ json: JSON.stringify(await catalog.list()) }),
       modelPreflight: async (input) => {
-        const { name } = input as { name: string }
-        const result = await catalog.preflight(name)
+        const { name, downloadMb } = input as { name: string; downloadMb?: number }
+        const result = await catalog.preflight(name, downloadMb)
         if (result.problems.length) log(`download preflight ${name}: ${result.problems.join(" | ")}`)
         return { json: JSON.stringify(result) }
       },

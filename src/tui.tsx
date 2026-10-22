@@ -189,7 +189,7 @@ type VoiceMethods = {
   updateStatus(input: Record<string, never>): Promise<JsonResult>
   updateRefresh(input: { force?: boolean }): Promise<JsonResult>
   updateProbe(input: { channel: string }): Promise<{ outcome: string }>
-  modelPreflight(input: { name: string }): Promise<JsonResult>
+  modelPreflight(input: { name: string; downloadMb?: number }): Promise<JsonResult>
   updateClaim(input: { version: string }): Promise<{ token: string }>
   updateRenew(input: { version: string; token: string }): Promise<{ renewed: boolean }>
   updateAcknowledge(input: { version: string }): Promise<Record<string, never>>
@@ -508,7 +508,45 @@ async function modelManager(context: Ctx) {
   let cursor: string | null = null
   let confirmDelete: string | null = null
   let neighbourNameAfterDelete: string | null = null
+  let confirmDownload: CatalogRow | null = null
+  const startDownload = (name: string) =>
+    voiceRpc(context)
+      .modelDownload({ name })
+      .catch((err) => notify(context, "error", { title: "download failed to start", message: errText(err) }))
+  /** Preflight (writable directory, working tar, room on disk), then the confirm dialog. Both enter and ctrl+d go through here. */
+  const offerDownload = async (row: CatalogRow): Promise<boolean> => {
+    type Preflight = { needMb: number; freeMb: number | null; dir: string; problems: string[] }
+    const pre = await voiceRpc(context)
+      .modelPreflight({ name: row.name, downloadMb: row.downloadMb })
+      .then((r) => JSON.parse(r.json) as Preflight)
+      .catch(() => null)
+    if (pre?.problems.length) {
+      await context.ui.dialog.alert({ title: `Cannot download ${row.name}`, message: pre.problems.join("\n\n") })
+      return false
+    }
+    const gb = (mb: number) => `${(mb / 1024).toFixed(1)} GB`
+    const space =
+      pre && pre.freeMb !== null && pre.freeMb < pre.needMb
+        ? `\n\nInstalling needs about ${gb(pre.needMb)} free in ${pre.dir}; ${gb(pre.freeMb)} is available. It may fail part-way.`
+        : ""
+    const ok = await context.ui.dialog.confirm({
+      title: `Download ${row.name}`,
+      message: `${row.downloadMb}M download${row.note ? ` — ${row.note}` : ""}.${space} Download and switch to it when ready?`,
+      label: { confirm: space ? "Download anyway" : "Download + select", cancel: "Not now" },
+    })
+    return ok === true // esc/undefined counts as "not now"
+  }
   while (true) {
+    // (assigned inside the dialog's action callback, which control-flow analysis cannot see)
+    const queued = confirmDownload as CatalogRow | null
+    if (queued) {
+      // ctrl+d: download without selecting, same checks as enter
+      confirmDownload = null
+      if (await offerDownload(queued)) {
+        void startDownload(queued.name)
+        context.ui.toast.show({ message: `downloading ${queued.name} — progress in the Voice panel`, duration: 5000 })
+      } else cursor = queued.name
+    }
     if (confirmDelete) {
       const name = confirmDelete
       confirmDelete = null
@@ -536,10 +574,6 @@ async function modelManager(context: Ctx) {
       const i = sorted.findIndex((m) => m.name === name)
       return sorted[i + 1]?.name ?? sorted[i - 1]?.name ?? name
     }
-    const startDownload = (name: string) =>
-      voiceRpc(context)
-        .modelDownload({ name })
-        .catch((err) => notify(context, "error", { title: "download failed to start", message: errText(err) }))
     const picked = await context.ui.dialog.select({
       title: "Models — enter: use · ctrl+d: download · ctrl+x: delete/cancel",
       current: cursor ?? String(cfg().model),
@@ -563,8 +597,8 @@ async function modelManager(context: Ctx) {
             if (!row || row.status !== "available") return
             refresh = true
             cursor = neighbourOf(name)
-            void startDownload(name)
-            context.ui.dialog.clear() // reopen with the queued state visible
+            confirmDownload = row
+            context.ui.dialog.clear() // loop runs preflight + confirmation next
           },
         },
         {
@@ -612,27 +646,7 @@ async function modelManager(context: Ctx) {
       context.ui.toast.show({ message: `${picked} will be selected when ready`, duration: 4000 })
       return
     }
-    // before offering the download: writable directory, working tar, room on disk
-    type Preflight = { needMb: number; freeMb: number | null; dir: string; problems: string[] }
-    const pre = await voiceRpc(context)
-      .modelPreflight({ name: picked })
-      .then((r) => JSON.parse(r.json) as Preflight)
-      .catch(() => null)
-    if (pre?.problems.length) {
-      await context.ui.dialog.alert({ title: `Cannot download ${picked}`, message: pre.problems.join("\n\n") })
-      continue
-    }
-    const gb = (mb: number) => `${(mb / 1024).toFixed(1)} GB`
-    const space =
-      pre && pre.freeMb !== null && pre.freeMb < pre.needMb
-        ? `\n\nInstalling needs about ${gb(pre.needMb)} free in ${pre.dir}; ${gb(pre.freeMb)} is available. It may fail part-way.`
-        : ""
-    const ok = await context.ui.dialog.confirm({
-      title: `Download ${picked}`,
-      message: `${row.downloadMb}M download${row.note ? ` — ${row.note}` : ""}.${space} Download and switch to it when ready?`,
-      label: { confirm: space ? "Download anyway" : "Download + select", cancel: "Not now" },
-    })
-    if (!ok) continue
+    if (!(await offerDownload(row))) continue
     pendingSelect = picked
     await startDownload(picked)
     context.ui.toast.show({ message: `downloading ${picked} — progress in the Voice panel`, duration: 5000 })
