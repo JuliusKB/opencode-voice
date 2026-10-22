@@ -24,6 +24,7 @@ export interface SettingSpec {
     | "Behavior"
     | "Shortcuts"
     | "Decoding"
+    | "Cleanup"
     | "Voice detection (VAD)"
     | "Level meter"
     | "Interface"
@@ -103,10 +104,18 @@ export const SPECS: SettingSpec[] = [
     key: "filterAnnotations",
     label: "Filter noise annotations",
     kind: "choice",
-    group: "Decoding",
+    group: "Cleanup",
     recommended: "whole lines only",
     choices: ["full", "whole lines only", "off"],
     hint: "(buzzing)/[BLANK_AUDIO] lines; full also strips markers inside lines",
+  },
+  {
+    key: "fillerWords",
+    label: "Filler words",
+    kind: "string",
+    group: "Cleanup",
+    recommended: "uh, um, umm, erm, hmm, hm, mm, mhm, m, ah, eh",
+    hint: "comma-separated; a line made only of these is dropped, never words inside a line; type off to disable",
   },
   { key: "vadEnabled", label: "VAD enabled", kind: "boolean", group: "Voice detection (VAD)", recommended: true, hint: "pause detection: splits takes into lines, skips silence" },
   { key: "vadThreshold", label: "VAD threshold", kind: "number", group: "Voice detection (VAD)", recommended: 0.5, hint: "0..1 — higher = stricter about what counts as speech" },
@@ -151,7 +160,7 @@ export function isChannelName(value: unknown): value is string {
 }
 
 /** Groups shown behind the "Advanced…" row (second menu page). */
-export const ADVANCED_GROUPS: string[] = ["Decoding", "Voice detection (VAD)", "Level meter", "Interface", "Debug"]
+export const ADVANCED_GROUPS: string[] = ["Decoding", "Cleanup", "Voice detection (VAD)", "Level meter", "Interface", "Debug"]
 
 export type Settings = Record<string, string | number | boolean>
 

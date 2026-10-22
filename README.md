@@ -54,6 +54,10 @@ it will be opt-in and off by default. Local stays the default.
 - **Voice activity detection**: pauses become line breaks, silence is never decoded
 - **Noise-annotation filter**: whisper artifacts like `(buzzing)` or
   `[BLANK_AUDIO]` are dropped before they reach your chat
+- **Filler-only lines**: a line that is nothing but `uh`, `um`, `hmm`… is
+  dropped; words inside a line are never touched. The list is a setting
+  (Advanced → Cleanup), so other languages can use their own fillers; `off`
+  disables it. Enable debug logging to see what was dropped
 - **Loss-resistant safety net**: audio is kept until its draft is safely
   stored, and the draft until it is submitted; one key recovers either after
   a failure or crash
@@ -238,7 +242,8 @@ means there was nothing on disk. The key is configurable under Shortcuts.
   model unload, reset, **About** (version and the project's GitHub and npm
   pages)
 
-**Advanced…** holds the tuned-by-default knobs: decode chunking, VAD
+**Advanced…** holds the tuned-by-default knobs: decode chunking, transcript
+cleanup (the noise-annotation filter and the filler-word list), VAD
 sensitivity, level-meter style/size/rate, toast timings, debug logging, the
 update channel.
 Changed values are marked `*` with their recommended value shown; clearing a

@@ -38,7 +38,8 @@
         "Recommended VAD minimum silence is now 0.8 s (was 0.4), which avoids isolated one-word lines; a saved 0.4 is kept and marked with * in the menu — reset to defaults or change it yourself."
       ],
       "0.0.9": [
-        "Long phrases are now cut at real pauses before the decode ceiling, which removes duplicated words and stray periods at the cut."
+        "Long phrases are now cut at real pauses before the decode ceiling, which removes duplicated words and stray periods at the cut.",
+        "Lines made only of filler words (uh, um, hmm…) are dropped; the list is a setting in the new Cleanup group, so other languages can use their own, and off disables it."
       ]
     }
   },

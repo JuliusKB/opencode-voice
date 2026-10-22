@@ -18,6 +18,7 @@
  */
 import sherpa from "sherpa-onnx-node"
 import { bool, dataDir, num, str } from "./settings"
+import { fillerSet, isFillerOnly } from "./cleanup"
 import { joinPieces, planCuts, type Range } from "./split"
 
 // inside the worker there is no server log; lines are posted to the parent
@@ -281,6 +282,7 @@ export async function transcribe(
   // a phrase above the decode ceiling is cut at pauses (split.ts); pieces of
   // one phrase stay one line
   const ceiling = num("ceilingSec")
+  const fillers = fillerSet(str("fillerWords"))
   const units = (segments ?? [samples]).map((phrase) => ({
     phrase,
     pieces: planCuts(phrase, SAMPLE_RATE, ceiling, num("splitSearchSec"), phrase.length > ceiling * SAMPLE_RATE ? pausesIn(phrase) : []),
@@ -303,7 +305,13 @@ export async function transcribe(
     }
     const { text: line, repairs } = joinPieces(parts)
     if (repairs) debug(`join repair: dropped ${repairs} terminator(s) at ceiling cuts`)
-    if (line) lines.push(line)
+    if (!line) continue
+    if (isFillerOnly(line, fillers)) {
+      // verbatim on purpose: how a user learns what their model emits for a hesitation
+      debug(`filler-only line dropped: "${line}"`)
+      continue
+    }
+    lines.push(line)
   }
 
   return {
