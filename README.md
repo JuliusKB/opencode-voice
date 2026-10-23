@@ -10,9 +10,9 @@ last take back (see [Recovery](#recovery-ctrlf9)).
 > Expect rough edges; see [Current limitations](#current-limitations-and-planned-work).
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/JuliusKB/opencode-voice/main/pics/state_ready.png" alt="Voice panel in the sidebar: ready, model loaded" width="378">
+  <img src="https://raw.githubusercontent.com/JuliusKB/opencode-voice/main/pics/state_ready.png" alt="Voice panel in the sidebar: ready, model loaded" width="376">
   &nbsp;&nbsp;
-  <img src="https://raw.githubusercontent.com/JuliusKB/opencode-voice/main/pics/state_recording.png" alt="Voice panel while recording, with live level meter" width="378">
+  <img src="https://raw.githubusercontent.com/JuliusKB/opencode-voice/main/pics/state_recording.png" alt="Voice panel while recording, with live level meter" width="376">
 </p>
 
 ## Your voice stays on your machine
@@ -187,7 +187,7 @@ differently and a source `.tsx` panel would render once and never update.
    as a form: **submit sends it to the chat, esc discards.**
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/JuliusKB/opencode-voice/main/pics/menu_model_manager.png" alt="Model manager: installed and available whisper models with sizes" width="571">
+  <img src="https://raw.githubusercontent.com/JuliusKB/opencode-voice/main/pics/menu_model_manager.png" alt="Model manager: installed and available whisper models with sizes" width="549">
 </p>
 
 That's the entire setup.
@@ -232,8 +232,13 @@ means there was nothing on disk. The key is configurable under Shortcuts.
 `ctrl+alt+v` opens the menu. The main page covers daily use:
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/JuliusKB/opencode-voice/main/pics/menu_main.png" alt="Voice settings menu: transcription, audio, behavior, shortcuts" width="571">
+  <img src="https://raw.githubusercontent.com/JuliusKB/opencode-voice/main/pics/menu_main.png" alt="Voice settings menu: transcription, audio, behavior, shortcuts" width="557">
+  &nbsp;&nbsp;
+  <img src="https://raw.githubusercontent.com/JuliusKB/opencode-voice/main/pics/menu_more.png" alt="Voice settings menu, scrolled down: behavior, shortcuts, and the More group with advanced settings, log, update check, release notes, model unload, reset, About" width="546">
 </p>
+
+The list is longer than the dialog: scroll or type to filter. The second
+picture shows the lower half with the **More** group.
 
 - **Transcription** — model (opens the model manager), language (for
   multilingual models; auto-detect by default)
